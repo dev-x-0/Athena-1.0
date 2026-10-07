@@ -1,0 +1,45 @@
+/* Declared data contract for Mode 03. This is pipeline documentation,
+   not analysis data. If the backend serves GET /references, the live
+   catalog overrides everything here. */
+export const DECLARED_SOURCES = [
+  {
+    source: "Operations warehouse (PostgreSQL)",
+    table: "inventory_snapshots",
+    fields: ["sku", "on_hand_units", "reserved_units", "snapshot_date"],
+    purpose: "Current and historical stock position per SKU.",
+    transformation: "Daily snapshots deduplicated on (sku, snapshot_date); reserved units excluded from available stock.",
+    why: "Anchors the inventory trajectory and stockout-risk calculation.",
+    range: "Trailing 180 days",
+    limitations: "Snapshot cadence is daily — intraday stock movements are not visible.",
+  },
+  {
+    source: "Ad platforms (daily export)",
+    table: "ad_spend_daily",
+    fields: ["channel", "campaign_id", "spend", "impressions", "clicks", "date"],
+    purpose: "Paid media spend and delivery by channel and campaign.",
+    transformation: "Currency normalized to the reporting currency; cancelled campaigns excluded.",
+    why: "Baseline for ROAS and spend-optimization recommendations.",
+    range: "Trailing 90 days",
+    limitations: "Attribution windows differ per platform; cross-channel ROAS is approximate.",
+  },
+  {
+    source: "Sales ledger",
+    table: "orders",
+    fields: ["order_id", "sku", "units", "unit_price", "order_date"],
+    purpose: "Realized demand and revenue.",
+    transformation: "Refunds netted out; internal test orders excluded.",
+    why: "Demand baseline against which projections are compared.",
+    range: "Trailing 365 days",
+    limitations: "Pending (not yet shipped) orders are not included.",
+  },
+  {
+    source: "Campaign metadata",
+    table: "campaigns",
+    fields: ["campaign_id", "name", "status", "start_date", "end_date"],
+    purpose: "Campaign context used to attribute spend and demand.",
+    transformation: "Joined to ad_spend_daily on campaign_id.",
+    why: "Separates paid demand from organic demand in projections.",
+    range: "Active plus trailing 90 days",
+    limitations: "Campaign naming conventions vary across teams.",
+  },
+];

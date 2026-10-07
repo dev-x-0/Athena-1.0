@@ -1,0 +1,41 @@
+creative_id,campaign_id,creative_name,format,impressions,clicks,conversions,spend,ctr,engagement,engagement_rate
+CR001,CMP001,Summer Performance Creative 1,image,14064,424,31,930.03,3.02,2.53,0.0253
+CR002,CMP001,Summer Performance Creative 2,video,27651,923,18,610.21,3.34,4.54,0.0454
+CR003,CMP001,Summer Performance Creative 3,carousel,15573,862,61,380.2,5.54,2.92,0.0292
+CR004,CMP001,Summer Performance Creative 4,reel,48783,2790,98,539.11,5.72,1.87,0.0187
+CR005,CMP001,Summer Performance Creative 5,image,9677,406,22,1109.14,4.2,10.44,0.1044
+CR006,CMP002,High Margin Push Creative 1,video,13906,728,12,1054.17,8.7,14.2,0.0471
+CR007,CMP002,High Margin Push Creative 2,carousel,10443,501,12,1132.36,4.8,9.15,0.0915
+CR008,CMP002,High Margin Push Creative 3,reel,39040,1253,93,1002.56,3.21,9.37,0.0937
+CR009,CMP002,High Margin Push Creative 4,image,39152,622,16,655.8,1.59,7.62,0.0762
+CR010,CMP002,High Margin Push Creative 5,video,20832,620,56,910.18,2.98,8.62,0.0862
+CR011,CMP003,Clearance Drive Creative 1,carousel,18913,366,33,894.02,1.94,11.14,0.1114
+CR012,CMP003,Clearance Drive Creative 2,reel,33769,1999,69,412.46,5.92,9.77,0.0977
+CR013,CMP003,Clearance Drive Creative 3,image,38035,2244,155,470.54,5.9,7.87,0.0787
+CR014,CMP003,Clearance Drive Creative 4,video,26053,1117,74,883.11,4.29,7.42,0.0742
+CR015,CMP003,Clearance Drive Creative 5,carousel,38298,490,21,133.98,1.28,5.66,0.0566
+CR016,CMP004,Retargeting Creative 1,reel,32258,1848,28,383.37,5.73,10.6,0.106
+CR017,CMP004,Retargeting Creative 2,image,17280,938,24,957.2,5.43,4.08,0.0408
+CR018,CMP004,Retargeting Creative 3,video,46033,989,18,881.02,2.15,8.17,0.0817
+CR019,CMP004,Retargeting Creative 4,carousel,25436,930,36,992.93,3.66,5.17,0.0517
+CR020,CMP004,Retargeting Creative 5,reel,45919,1786,49,286.05,3.89,3.72,0.0372
+CR021,CMP005,New Product Launch Creative 1,image,12324,197,8,181.46,1.6,2.89,0.0289
+CR022,CMP005,New Product Launch Creative 2,video,9950,511,30,794.0,5.14,10.76,0.1076
+CR023,CMP005,New Product Launch Creative 3,carousel,21914,791,37,614.42,3.61,3.28,0.0328
+CR024,CMP005,New Product Launch Creative 4,reel,40115,1997,57,1026.28,4.98,4.97,0.0497
+CR025,CMP005,New Product Launch Creative 5,image,57410,3031,53,338.28,5.28,8.73,0.0873
+CR026,CMP006,Low ROAS Test Creative 1,video,42732,2371,64,709.71,5.55,8.03,0.0803
+CR027,CMP006,Low ROAS Test Creative 2,carousel,29489,1214,26,842.23,4.12,8.67,0.0867
+CR028,CMP006,Low ROAS Test Creative 3,reel,38568,528,21,195.38,1.37,3.83,0.0383
+CR029,CMP006,Low ROAS Test Creative 4,image,23186,1092,34,700.38,4.71,9.48,0.0948
+CR030,CMP006,Low ROAS Test Creative 5,video,29252,982,38,762.2,3.36,9.24,0.0924
+CR031,CMP007,Fitness Campaign Creative 1,carousel,11600,415,24,642.86,3.58,6.42,0.0642
+CR032,CMP007,Fitness Campaign Creative 2,reel,8951,520,17,338.61,5.81,2.5,0.025
+CR033,CMP007,Fitness Campaign Creative 3,image,37288,1178,78,726.98,3.16,3.12,0.0312
+CR034,CMP007,Fitness Campaign Creative 4,video,5031,287,7,458.86,5.71,8.24,0.0824
+CR035,CMP007,Fitness Campaign Creative 5,carousel,21943,1053,34,650.23,4.8,9.44,0.0944
+CR036,CMP008,Accessory Scale Creative 1,reel,27674,1452,118,375.48,5.25,4.26,0.0426
+CR037,CMP008,Accessory Scale Creative 2,image,40133,2395,195,1045.97,5.97,11.3,0.113
+CR038,CMP008,Accessory Scale Creative 3,video,37034,748,22,583.79,2.02,11.85,0.1185
+CR039,CMP008,Accessory Scale Creative 4,carousel,29693,1642,111,702.01,5.53,7.39,0.0739
+CR040,CMP008,Accessory Scale Creative 5,reel,59177,2088,113,466.9,3.53,4.97,0.0497

@@ -1,0 +1,2774 @@
+# ATHENA — Frontend Build
+
+Before the code, three design decisions worth locking in, since they drive every screen:
+
+**1. Palette — derived from the logo, not the dashboard screenshot.** The brief says the logo is the primary brand reference, and the logo is champagne-gold foil line-art on deep ink navy. So the system is: ink-navy surfaces (`#0A0F16` range), warm hairline borders, champagne-gold accents (`#D6B985`), and one warm amber drawn from the intro video's window-light. The existing dashboard screenshot informed *density, voice* ("Good morning, Operative.", ₹ currency, directive tone) — not color. No purple, no neon, no glass.
+
+**2. Opening sequence — respecting the video's grammar.** The app auto-plays `public/intro.mp4` (drop the supplied file there). If the file is absent, a motion-built intro plays the *same grammar*: ink canvas, the mark drawing itself, a thin rounded progress frame with a counting percentage (14 → 100 style), then a split-curtain reveal into login. Both paths end in the same cinematic reveal. `?intro=0` skips it; `prefers-reduced-motion` skips it.
+
+**3. API honesty.** No contract was included in the brief, so every network call and field-name mapping is isolated in `src/lib/api.js` + `src/lib/contract.js`. Components never fabricate data — missing fields render `—`, missing series render empty states, empty history renders an empty state. To match your backend, you edit **one folder**.
+
+---
+
+## Folder structure
+
+```
+athena-frontend/
+├── .env.example
+├── .gitignore
+├── index.html
+├── package.json
+├── vite.config.js
+├── README.md
+├── public/
+│   ├── favicon.svg
+│   └── intro.mp4            ← drop the supplied brand video here (auto-detected)
+└── src/
+    ├── main.jsx
+    ├── App.jsx
+    ├── styles/global.css
+    ├── lib/
+    │   ├── api.js            ← fetch wrapper + polling (only place that touches network)
+    │   ├── contract.js       ← ALL field-name mappings (single integration point)
+    │   ├── format.js
+    │   ├── quotes.js
+    │   └── hooks.js
+    ├── data/provenance.js    ← declared data contract for Mode 3
+    ├── state/AuthContext.jsx
+    ├── components/
+    │   ├── AthenaMark.jsx    ← inline SVG recreation of the foil emblem
+    │   ├── ui.jsx
+    │   ├── charts.jsx
+    │   └── ResultReport.jsx
+    └── screens/
+        ├── IntroSequence.jsx
+        ├── Auth.jsx
+        └── command/
+            ├── CommandShell.jsx
+            ├── Home.jsx
+            ├── History.jsx
+            ├── AnalysisDetail.jsx
+            ├── RunAnalysis.jsx
+            └── DataReferences.jsx
+```
+
+---
+
+### `package.json`
+
+```json
+{
+  "name": "athena-frontend",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "framer-motion": "^11.11.7",
+    "lucide-react": "^0.451.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.27.0",
+    "recharts": "^2.13.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.2",
+    "vite": "^5.4.8"
+  }
+}
+```
+
+### `vite.config.js`
+
+```js
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+
+export default defineConfig({
+  plugins: [react()],
+  server: { port: 5173 },
+});
+```
+
+### `index.html`
+
+```html
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0A0F16" />
+    <meta name="description" content="Athena — Executive intelligence for inventory and spend decisions." />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Sora:wght@200;400;600&display=swap"
+      rel="stylesheet"
+    />
+    <title>Athena — Executive Intelligence</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
+```
+
+### `.env.example`
+
+```bash
+# Base URL of the Athena backend (no trailing slash)
+VITE_API_BASE_URL=http://localhost:8000
+
+# Currency symbol shown on monetary values
+VITE_CURRENCY=₹
+```
+
+### `.gitignore`
+
+```
+node_modules
+dist
+.env
+.env.local
+```
+
+### `public/favicon.svg`
+
+```svg
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="14" fill="#0A0F16"/>
+  <g fill="none" stroke="#D6B985" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M32 8c-3 4.5-3 8.3 0 12 3-3.7 3-7.5 0-12Z"/>
+    <path d="M32 20v36"/>
+    <path d="M18 54 32 24l14 30"/>
+    <path d="M24.5 42.5h15"/>
+  </g>
+</svg>
+```
+
+---
+
+### `src/styles/global.css`
+
+```css
+/* ============================================================
+   ATHENA — design tokens & base
+   Palette derived from the foil emblem: champagne gold on ink navy.
+   ============================================================ */
+:root {
+  --ink-950: #070b10;
+  --ink-900: #0a0f16;
+  --ink-850: #0d141f;
+  --ink-800: #101827;
+  --ink-700: #152031;
+  --ink-600: #1c2a3f;
+
+  --line: rgba(231, 216, 187, 0.09);
+  --line-strong: rgba(231, 216, 187, 0.17);
+
+  --text-hi: #ede7d9;
+  --text-mid: #a9afbb;
+  --text-low: #6b7382;
+
+  --gold-200: #f1e3c0;
+  --gold-300: #e5cfa2;
+  --gold-400: #d6b985;
+  --gold-500: #b99b66;
+  --amber: #e4a96b;
+  --pos: #8fbfa6;
+  --neg: #d68d7c;
+
+  --gold-soft: rgba(214, 185, 133, 0.12);
+
+  --radius: 14px;
+  --radius-sm: 9px;
+  --font-display: "Sora", "Inter", system-ui, sans-serif;
+  --font-body: "Inter", system-ui, -apple-system, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  background: var(--ink-900);
+  color: var(--text-hi);
+  font: 400 14px/1.55 var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+/* barely-there champagne sheen — keeps flat ink from reading dead */
+body::before {
+  content: "";
+  position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  background: radial-gradient(1100px 460px at 50% -12%, rgba(214,185,133,0.05), transparent 62%);
+}
+::selection { background: rgba(214, 185, 133, 0.28); }
+:focus-visible { outline: 2px solid var(--gold-300); outline-offset: 2px; border-radius: 4px; }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; padding: 0; }
+input, select, textarea { font: inherit; color: var(--text-hi); }
+a { color: inherit; text-decoration: none; }
+h1, h2, h3 { margin: 0; font-family: var(--font-display); font-weight: 600; }
+p { margin: 0; }
+svg { display: block; }
+
+.skip {
+  position: fixed; top: -48px; left: 16px; z-index: 100;
+  background: var(--gold-300); color: #17130b; padding: 8px 14px; border-radius: 8px;
+  transition: top 0.2s;
+}
+.skip:focus-visible { top: 12px; }
+
+/* ---------- typography helpers ---------- */
+.eyebrow {
+  font: 600 10.5px/1 var(--font-body);
+  letter-spacing: 0.24em; text-transform: uppercase; color: var(--gold-500);
+}
+.mono { font-family: var(--font-mono); font-size: 11.5px; letter-spacing: 0.04em; color: var(--text-low); }
+.muted { color: var(--text-mid); }
+.pos { color: var(--pos); } .neg { color: var(--neg); } .amb { color: var(--amber); }
+
+/* ---------- buttons ---------- */
+.btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 10px 18px; border-radius: 10px;
+  background: var(--gold-300); color: #17130b;
+  font-weight: 600; font-size: 13.5px; letter-spacing: 0.01em;
+  transition: filter 0.15s, transform 0.15s;
+}
+.btn:hover { filter: brightness(1.06); }
+.btn:active { transform: translateY(1px); }
+.btn:disabled { opacity: 0.55; cursor: default; }
+.btn--ghost {
+  background: transparent; color: var(--text-hi);
+  border: 1px solid var(--line-strong);
+}
+.btn--ghost:hover { border-color: var(--gold-500); background: rgba(214, 185, 133, 0.06); }
+.btn--sm { padding: 7px 13px; font-size: 12.5px; border-radius: 8px; }
+
+.link {
+  display: inline-flex; align-items: center; gap: 6px;
+  color: var(--gold-300); font-size: 13px; font-weight: 500;
+}
+.link:hover { color: var(--gold-200); }
+
+/* ---------- panels & stats ---------- */
+.panel {
+  background: linear-gradient(180deg, rgba(233, 221, 196, 0.025), transparent 42%), var(--ink-800);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.stat { padding: 16px 18px 15px; display: flex; flex-direction: column; gap: 7px; }
+.stat .klabel { font-size: 12px; color: var(--text-low); letter-spacing: 0.02em; }
+.stat .kvalue { font: 400 24px/1.1 var(--font-display); letter-spacing: -0.01em; }
+.stat .ksub { font-size: 11.5px; color: var(--text-low); }
+
+.pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  font: 500 11px/1 var(--font-body); letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 5px 10px; border-radius: 999px; border: 1px solid var(--line-strong); color: var(--text-mid);
+}
+.pill i { width: 6px; height: 6px; border-radius: 50%; background: var(--text-low); }
+.pill--ok { color: var(--pos); border-color: rgba(143, 191, 166, 0.35); } .pill--ok i { background: var(--pos); }
+.pill--run { color: var(--gold-300); border-color: rgba(214, 185, 133, 0.4); }
+.pill--run i { background: var(--gold-300); animation: pulse 1.3s ease-in-out infinite; }
+.pill--bad { color: var(--neg); border-color: rgba(214, 141, 124, 0.4); } .pill--bad i { background: var(--neg); }
+
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+@keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+.skel {
+  border-radius: 8px;
+  background: linear-gradient(90deg, var(--ink-700) 25%, var(--ink-600) 50%, var(--ink-700) 75%);
+  background-size: 200% 100%; animation: shimmer 1.3s linear infinite;
+}
+
+/* ---------- forms ---------- */
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field label { font-size: 12.5px; font-weight: 500; color: var(--text-mid); }
+.field .opt { color: var(--text-low); font-weight: 400; }
+.input, select.input, textarea.input {
+  width: 100%; background: var(--ink-850);
+  border: 1px solid var(--line); border-radius: 10px;
+  padding: 10px 12px; font-size: 14px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.input::placeholder { color: var(--text-low); }
+.input:focus { outline: none; border-color: var(--gold-500); box-shadow: 0 0 0 3px rgba(214, 185, 133, 0.16); }
+.input.err { border-color: rgba(214, 141, 124, 0.55); }
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+input[type="number"] { -moz-appearance: textfield; }
+.ferr { font-size: 12px; color: var(--neg); }
+.fhint { font-size: 11.5px; color: var(--text-low); }
+.pw-wrap { position: relative; }
+.pw-wrap input { padding-right: 40px; }
+.pw-eye {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  padding: 6px; color: var(--text-low); border-radius: 7px;
+}
+.pw-eye:hover { color: var(--text-mid); }
+
+.banner {
+  display: flex; gap: 9px; align-items: flex-start;
+  padding: 10px 13px; border-radius: 10px; font-size: 13px;
+  border: 1px solid rgba(214, 141, 124, 0.4); background: rgba(214, 141, 124, 0.08); color: #ecbcb0;
+}
+.banner--ok { border-color: rgba(143, 191, 166, 0.4); background: rgba(143, 191, 166, 0.08); color: #b6d7c6; }
+
+/* ---------- empty state ---------- */
+.empty {
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  text-align: center; padding: 44px 24px; color: var(--text-mid);
+}
+.empty svg { color: var(--text-low); }
+.empty h3 { font-size: 16px; color: var(--text-hi); }
+.empty p { font-size: 13px; max-width: 380px; }
+
+/* ---------- auth ---------- */
+.auth { min-height: 100vh; display: grid; grid-template-columns: 1.1fr 520px; }
+.auth-brand {
+  position: relative; display: flex; flex-direction: column; justify-content: space-between;
+  padding: 40px 48px; border-right: 1px solid var(--line);
+}
+.brandline { display: flex; align-items: center; gap: 13px; color: var(--gold-300); }
+.brandline .wordmark { font: 600 15px/1 var(--font-display); letter-spacing: 0.44em; color: var(--text-hi); padding-left: 0.2em; }
+.brandline .tag { font: 600 9px/1 var(--font-body); letter-spacing: 0.3em; color: var(--text-low); margin-top: 6px; text-transform: uppercase; }
+.quote { max-width: 460px; }
+.quote blockquote { margin: 0; font: 400 19px/1.5 var(--font-display); color: var(--text-hi); }
+.quote .quote-author { margin-top: 12px; font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--gold-500); }
+.auth-form { display: flex; align-items: center; justify-content: center; padding: 48px 40px; }
+.auth-card { width: 100%; max-width: 360px; display: flex; flex-direction: column; gap: 18px; }
+.auth-card h1 { font-size: 26px; letter-spacing: -0.01em; }
+.auth-card .sub { color: var(--text-mid); font-size: 13.5px; margin-top: -12px; }
+.auth-swap { text-align: center; font-size: 13px; color: var(--text-low); }
+.auth-swap button { color: var(--gold-300); font-weight: 500; }
+.auth-swap button:hover { color: var(--gold-200); }
+
+/* ---------- intro ---------- */
+.intro { position: fixed; inset: 0; z-index: 60; }
+.curtain { position: absolute; left: 0; width: 100%; height: 50.5%; background: var(--ink-950); }
+.curtain--t { top: 0; } .curtain--b { bottom: 0; }
+.intro-content { position: absolute; inset: 0; z-index: 2; }
+.intro-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity 0.6s; }
+.intro-video.on { opacity: 1; }
+.intro-frame { position: absolute; inset: 22px; border: 1px solid var(--line-strong); border-radius: 22px; pointer-events: none; }
+.intro-progress {
+  position: absolute; top: 22px; left: 50%; transform: translateX(-50%);
+  height: 2px; background: var(--gold-300); border-radius: 2px; transition: width 0.15s linear;
+}
+.intro-brand { position: absolute; inset: 0; display: grid; place-items: center; }
+.intro-brand-inner { display: flex; flex-direction: column; align-items: center; gap: 20px; color: var(--gold-300); }
+.intro-count {
+  position: absolute; left: 54px; bottom: 48px;
+  font: 200 74px/1 var(--font-display); letter-spacing: -0.02em;
+  color: rgba(237, 231, 217, 0.82); font-variant-numeric: tabular-nums;
+}
+.intro-skip { position: absolute; right: 40px; bottom: 40px; z-index: 3; }
+
+/* ---------- shell ---------- */
+.shell { position: relative; z-index: 1; display: grid; grid-template-columns: 236px 1fr; min-height: 100vh; }
+.side {
+  position: sticky; top: 0; height: 100vh;
+  display: flex; flex-direction: column; gap: 26px;
+  padding: 26px 16px 20px; border-right: 1px solid var(--line); background: var(--ink-850);
+}
+.side-nav { display: flex; flex-direction: column; gap: 3px; }
+.nav-item {
+  position: relative; display: flex; align-items: center; gap: 11px;
+  padding: 9px 12px; border-radius: 9px; font-size: 13px; font-weight: 500; color: var(--text-mid);
+  transition: color 0.15s, background 0.15s;
+}
+.nav-item svg { width: 16px; height: 16px; }
+.nav-item:hover { color: var(--text-hi); background: rgba(233, 221, 196, 0.04); }
+.nav-item.active { color: var(--gold-200); background: rgba(214, 185, 133, 0.08); }
+.nav-item.active::before {
+  content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 2px;
+  border-radius: 2px; background: var(--gold-400);
+}
+.side-foot { margin-top: auto; display: flex; flex-direction: column; gap: 10px; }
+.userchip { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; }
+.avatar {
+  width: 28px; height: 28px; border-radius: 50%; flex: none;
+  display: grid; place-items: center;
+  background: var(--gold-soft); color: var(--gold-300);
+  font: 600 12px/1 var(--font-display); text-transform: uppercase;
+}
+.userchip .u-name { font-size: 12.5px; font-weight: 500; color: var(--text-hi); line-height: 1.2; word-break: break-all; }
+.signout { display: flex; align-items: center; gap: 8px; padding: 7px 10px; font-size: 12.5px; color: var(--text-low); border-radius: 8px; }
+.signout:hover { color: var(--neg); background: rgba(214, 141, 124, 0.07); }
+
+.main { min-width: 0; }
+.page { max-width: 1220px; margin: 0 auto; padding: 36px 42px 72px; }
+.page-head { margin-bottom: 30px; display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+.page-head h1 { font-size: 32px; letter-spacing: -0.015em; margin-top: 10px; }
+.page-head .sub { color: var(--text-mid); margin-top: 8px; font-size: 14px; max-width: 560px; }
+.backlink { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--text-low); margin-bottom: 14px; }
+.backlink:hover { color: var(--text-mid); }
+
+/* ---------- home modes ---------- */
+.modes { border-bottom: 1px solid var(--line); }
+.mode {
+  width: 100%; text-align: left; display: grid;
+  grid-template-columns: 72px 1fr auto 30px; gap: 22px; align-items: center;
+  padding: 27px 10px; border-top: 1px solid var(--line);
+  transition: background 0.2s;
+}
+.mode:hover { background: rgba(233, 221, 196, 0.028); }
+.mode-idx { font: 400 15px/1 var(--font-display); color: var(--gold-500); letter-spacing: 0.08em; }
+.mode h2 { font-size: 23px; font-weight: 600; letter-spacing: -0.01em; color: var(--text-hi); }
+.mode .desc { margin-top: 5px; color: var(--text-mid); font-size: 13.5px; }
+.mode-meta { text-align: right; }
+.mode-meta .m1 { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.05em; color: var(--text-low); }
+.mode-meta .m2 { margin-top: 5px; font-size: 12px; color: var(--text-mid); }
+.mode-arrow { color: var(--text-low); transition: transform 0.2s var(--ease), color 0.2s; }
+.mode:hover .mode-arrow { transform: translateX(4px); color: var(--gold-300); }
+.home-grid { display: grid; grid-template-columns: 1fr 300px; gap: 40px; align-items: start; }
+
+.syslist { display: flex; flex-direction: column; }
+.sysrow { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+.sysrow:last-child { border-bottom: 0; }
+.sysrow .k { color: var(--text-low); }
+.dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; margin-right: 7px; vertical-align: 1px; }
+.dot.ok { background: var(--pos); } .dot.bad { background: var(--neg); } .dot.wait { background: var(--gold-400); animation: pulse 1.2s infinite; }
+
+/* ---------- history ---------- */
+.rowtable { overflow: hidden; }
+.hhead, .hrow { display: grid; grid-template-columns: 108px 92px 1.35fr 84px 116px 1.15fr 104px 22px; gap: 14px; align-items: center; padding: 13px 18px; }
+.hhead { font: 500 10.5px/1 var(--font-body); letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-low); border-bottom: 1px solid var(--line); }
+.hrow { width: 100%; text-align: left; border-bottom: 1px solid var(--line); transition: background 0.15s; }
+.hrow:last-child { border-bottom: 0; }
+.hrow:hover { background: rgba(233, 221, 196, 0.03); }
+.hrow .c-id { color: var(--text-low); }
+.hrow .c-scen { color: var(--text-hi); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hrow .c-rec { color: var(--gold-300); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hrow .chev { color: var(--text-low); }
+
+/* ---------- recommendation ---------- */
+.reco { position: relative; padding: 26px 30px 24px; overflow: hidden; }
+.reco::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--gold-400); }
+.reco .action {
+  margin-top: 12px; font: 600 29px/1.1 var(--font-display);
+  letter-spacing: 0.015em; text-transform: uppercase; color: var(--gold-200);
+}
+.reco .reason { margin-top: 12px; color: var(--text-mid); max-width: 640px; font-size: 14px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+.chip {
+  border: 1px solid var(--line-strong); border-radius: 999px; padding: 6px 12px;
+  font-size: 12px; color: var(--text-mid);
+}
+.chip b { color: var(--text-hi); font-weight: 600; }
+.meterline { display: flex; align-items: center; gap: 12px; margin-top: 20px; }
+.meter { flex: 0 0 170px; height: 3px; background: var(--ink-600); border-radius: 2px; overflow: hidden; }
+.meter span { display: block; height: 100%; background: var(--gold-300); border-radius: 2px; }
+.meterlabel { font-size: 12px; color: var(--text-mid); }
+
+/* ---------- charts ---------- */
+.charts { display: grid; grid-template-columns: repeat(12, 1fr); gap: 18px; }
+.chart-card { padding: 20px 20px 12px; }
+.chart-card h3 { font-size: 15px; font-weight: 600; }
+.chart-card .q { margin-top: 4px; font-size: 12px; color: var(--text-low); }
+.tip {
+  background: var(--ink-950); border: 1px solid var(--line-strong); border-radius: 9px;
+  padding: 9px 12px; font-size: 12px; color: var(--text-mid);
+}
+.tip .t-label { color: var(--text-low); font-family: var(--font-mono); font-size: 10.5px; margin-bottom: 4px; }
+.tip .t-row { display: flex; align-items: center; gap: 7px; margin-top: 2px; color: var(--text-hi); }
+.tip .t-row i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; padding: 8px 4px 6px; font-size: 11.5px; color: var(--text-mid); }
+.legend i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; margin-right: 6px; }
+.donut-wrap { position: relative; }
+.donut-center { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; text-align: center; }
+.donut-center .dc-v { font: 400 20px/1.1 var(--font-display); }
+.donut-center .dc-k { font-size: 10.5px; color: var(--text-low); letter-spacing: 0.1em; text-transform: uppercase; margin-top: 4px; }
+
+.scen { padding: 4px 0 10px; display: flex; flex-direction: column; gap: 16px; }
+.scen-row { display: grid; grid-template-columns: 150px 1fr 1fr 1fr; gap: 16px; align-items: center; }
+.scen-name { font-weight: 500; font-size: 13px; color: var(--text-hi); }
+.sbar-cell { display: flex; flex-direction: column; gap: 4px; }
+.sbar-cell .sv { font-size: 11px; color: var(--text-low); font-family: var(--font-mono); }
+.sbar { height: 5px; background: var(--ink-600); border-radius: 3px; overflow: hidden; }
+.sbar span { display: block; height: 100%; border-radius: 3px; background: var(--gold-400); }
+.sbar.dim span { background: var(--ink-600); border: 1px solid var(--line-strong); }
+.scen-head { display: grid; grid-template-columns: 150px 1fr 1fr 1fr; gap: 16px; font: 500 10px/1 var(--font-body); letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-low); }
+
+/* ---------- processing ---------- */
+.steps { display: flex; flex-direction: column; gap: 13px; margin-top: 22px; }
+.step { display: flex; align-items: center; gap: 12px; font-size: 13.5px; color: var(--text-low); transition: color 0.3s; }
+.step.on { color: var(--text-hi); }
+.step .s-ic { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; border: 1px solid var(--line-strong); flex: none; }
+.step.on .s-ic { border-color: var(--gold-400); }
+.step.done { color: var(--text-mid); }
+.step.done .s-ic { border-color: var(--gold-500); color: var(--gold-300); }
+.pulsebar { height: 2px; background: var(--ink-600); border-radius: 2px; overflow: hidden; margin-top: 24px; }
+.pulsebar span { display: block; height: 100%; background: var(--gold-400); transition: width 0.4s linear; }
+.proc-top { display: flex; align-items: center; gap: 10px; font-size: 13.5px; color: var(--text-mid); }
+.proc-top .dot { margin: 0; }
+
+/* ---------- key/value grids, raw ---------- */
+.defgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; }
+.def { background: var(--ink-800); padding: 12px 15px; }
+.def .dt { font-size: 11px; color: var(--text-low); letter-spacing: 0.05em; text-transform: uppercase; }
+.def .dd { margin-top: 4px; font-size: 13.5px; color: var(--text-hi); word-break: break-word; }
+.raw summary, .details summary {
+  cursor: pointer; font-size: 12.5px; color: var(--text-mid); font-weight: 500;
+  display: inline-flex; align-items: center; gap: 7px; list-style: none;
+}
+.raw summary::-webkit-details-marker, .details summary::-webkit-details-marker { display: none; }
+.raw summary:hover, .details summary:hover { color: var(--gold-300); }
+.raw pre {
+  margin: 14px 0 0; padding: 16px; background: var(--ink-950);
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  font: 400 11.5px/1.6 var(--font-mono); color: var(--text-mid);
+  overflow: auto; max-height: 380px;
+}
+
+/* ---------- provenance ---------- */
+.prov-list { display: flex; flex-direction: column; gap: 12px; }
+.prov summary {
+  cursor: pointer; list-style: none; display: grid;
+  grid-template-columns: 1fr auto 22px; gap: 16px; align-items: center;
+  padding: 17px 20px;
+}
+.prov summary::-webkit-details-marker { display: none; }
+.prov summary:hover { background: rgba(233, 221, 196, 0.025); }
+.prov .p-src { font-weight: 600; font-size: 14px; color: var(--text-hi); }
+.prov .p-tbl { color: var(--text-low); }
+.prov .p-chev { color: var(--text-low); transition: transform 0.2s; }
+.prov[open] .p-chev { transform: rotate(90deg); }
+.prov-body { padding: 2px 20px 20px; display: flex; flex-direction: column; gap: 16px; }
+.fld-chips { display: flex; flex-wrap: wrap; gap: 7px; }
+.fld-chips span { font-family: var(--font-mono); font-size: 11px; color: var(--gold-300); border: 1px solid rgba(214, 185, 133, 0.25); padding: 4px 9px; border-radius: 6px; }
+.prov-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; }
+.prov-cols .def { background: var(--ink-850); }
+.badge {
+  font: 600 9.5px/1 var(--font-body); letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--gold-300); border: 1px solid rgba(214, 185, 133, 0.35);
+  padding: 4px 9px; border-radius: 999px;
+}
+
+/* ---------- responsive ---------- */
+@media (max-width: 1120px) {
+  .hhead, .hrow { grid-template-columns: 96px 1.3fr 84px 1.2fr 100px 22px; }
+  .hhead .hide-m, .hrow .hide-m { display: none; }
+  .home-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 920px) {
+  .shell { grid-template-columns: 1fr; }
+  .side { position: sticky; top: 0; height: auto; z-index: 20; flex-direction: row; align-items: center; gap: 18px; padding: 12px 16px; border-right: 0; border-bottom: 1px solid var(--line); }
+  .side-nav { flex-direction: row; overflow-x: auto; }
+  .nav-item { white-space: nowrap; }
+  .nav-item.active::before { display: none; }
+  .side-foot { margin: 0 0 0 auto; flex-direction: row; align-items: center; }
+  .userchip { border: 0; padding: 0; }
+  .userchip .u-name { display: none; }
+  .signout span { display: none; }
+  .auth { grid-template-columns: 1fr; }
+  .auth-brand { border-right: 0; border-bottom: 1px solid var(--line); padding: 26px 28px; gap: 30px; }
+  .quote blockquote { font-size: 15px; }
+  .page { padding: 26px 20px 60px; }
+  .charts > * { grid-column: 1 / -1 !important; }
+  .prov-cols { grid-template-columns: 1fr; }
+  .scen-row, .scen-head { grid-template-columns: 110px 1fr 1fr 1fr; }
+}
+@media (max-width: 640px) {
+  .hhead, .hrow { grid-template-columns: 1.4fr 1fr 92px 22px; }
+  .hhead .hide-s, .hrow .hide-s { display: none; }
+  .stat .kvalue { font-size: 20px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.001s !important; transition-duration: 0.001s !important; }
+}
+```
+
+---
+
+### `src/lib/format.js`
+
+```js
+export const CURRENCY = (import.meta.env.VITE_CURRENCY || "₹").trim();
+
+export function isNum(v) {
+  return typeof v === "number" && Number.isFinite(v);
+}
+
+export function money(v) {
+  if (!isNum(v)) return "—";
+  const abs = Math.abs(v);
+  if (abs >= 1e7) return `${CURRENCY}${(v / 1e6).toFixed(1)}M`;
+  if (abs >= 1e5) return `${CURRENCY}${(v / 1e5).toFixed(1)}L`;
+  if (abs >= 1e3) return `${CURRENCY}${(v / 1e3).toFixed(1)}K`;
+  return `${CURRENCY}${Math.round(v).toLocaleString("en-IN")}`;
+}
+
+export function num(v) {
+  if (!isNum(v)) return "—";
+  return v.toLocaleString("en-IN");
+}
+
+export function roas(v) {
+  if (!isNum(v)) return "—";
+  return `${v.toFixed(2)}x`;
+}
+
+export function pct(v, digits = 0) {
+  if (!isNum(v)) return "—";
+  const p = Math.abs(v) <= 1 && /confidence/i.test("") === false && v !== 0 ? v * 100 : v;
+  return `${p.toFixed(digits)}%`;
+}
+
+/* confidence: accept 0–1 or 0–100 */
+export function confidencePct(v) {
+  if (!isNum(v)) return null;
+  return v > 1 ? v : v * 100;
+}
+
+export function pctPoint(v) {
+  if (!isNum(v)) return "—";
+  return `${v > 0 ? "+" : ""}${v.toFixed(1)}%`;
+}
+
+export function dateShort(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return String(iso);
+  return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+}
+
+export function dateTime(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return String(iso);
+  return d.toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+export function relTime(iso) {
+  if (!iso) return "—";
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return "—";
+  const s = Math.max(1, Math.floor((Date.now() - t) / 1000));
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  return `${d}d ago`;
+}
+
+export function humanAction(action) {
+  if (!action) return "Review required";
+  return String(action).replace(/[_-]+/g, " ").trim();
+}
+```
+
+### `src/lib/quotes.js`
+
+```js
+const QUOTES = [
+  { text: "Without data, you're just another person with an opinion.", author: "W. Edwards Deming" },
+  { text: "If we have data, let's look at data. If all we have are opinions, let's go with mine.", author: "Jim Barksdale" },
+  { text: "The goal is to turn data into information, and information into insight.", author: "Carly Fiorina" },
+  { text: "Plans are worthless, but planning is everything.", author: "Dwight D. Eisenhower" },
+  { text: "Strategy is about making choices, trade-offs. It is about deliberately choosing to be different.", author: "Michael Porter" },
+  { text: "Torture the data, and it will confess to anything.", author: "Ronald Coase" },
+  { text: "What gets measured gets managed.", author: "Peter Drucker" },
+  { text: "Information is the oil of the 21st century, and analytics is the combustion engine.", author: "Peter Sondergaard" },
+];
+
+export function randomQuote() {
+  return QUOTES[Math.floor(Math.random() * QUOTES.length)];
+}
+
+export function nextQuote(i) {
+  return (i + 1) % QUOTES.length;
+}
+
+export { QUOTES };
+```
+
+### `src/lib/contract.js`
+
+```js
+/* ============================================================
+   SINGLE INTEGRATION POINT with the Athena backend.
+   Every field-name expectation lives here. Components never read
+   raw payloads. If the backend uses different names, change them
+   HERE ONLY. Absent fields propagate as `undefined` and the UI
+   renders em-dashes / empty states — nothing is fabricated.
+   ============================================================ */
+
+const alias = (o, ...keys) => {
+  if (!o || typeof o !== "object") return undefined;
+  for (const k of keys) if (o[k] !== null && o[k] !== undefined) return o[k];
+  return undefined;
+};
+
+export const AUTH = {
+  loginPath: "/auth/login",
+  registerPath: "/auth/register",
+};
+
+/* ---- auth ---- */
+export function normalizeSession(d) {
+  return {
+    token: alias(d, "token", "access_token", "jwt"),
+    username: alias(d?.user, "username", "name") ?? alias(d, "username", "user", "name"),
+  };
+}
+
+/* ---- history summaries ---- */
+export function normalizeSummaries(d) {
+  const list = Array.isArray(d)
+    ? d
+    : alias(d, "analyses", "items", "results", "history") || [];
+  return (Array.isArray(list) ? list : []).map(normalizeSummary);
+}
+
+export function normalizeSummary(raw) {
+  const k = raw?.kpis ?? raw ?? {};
+  const r = raw?.recommendation ?? {};
+  const scenario =
+    alias(raw, "scenario", "label", "title") ||
+    [alias(raw, "sku"), alias(raw, "product")].filter(Boolean).join(" · ") ||
+    "Unnamed scenario";
+  return {
+    id: String(alias(raw, "id", "analysis_id", "run_id") ?? "—"),
+    createdAt: alias(raw, "created_at", "createdAt", "timestamp", "date"),
+    status: String(alias(raw, "status", "state") ?? "complete").toLowerCase(),
+    scenario,
+    roas: alias(k, "roas", "roas_value"),
+    predictedRevenue: alias(k, "predicted_revenue", "projected_revenue", "revenue"),
+    recommendation: alias(r, "headline", "action", "recommendation"),
+  };
+}
+
+/* ---- full result ---- */
+export function normalizeResult(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const k = raw?.kpis ?? raw ?? {};
+  const r = raw?.recommendation ?? raw?.athena_recommendation ?? {};
+  const s = raw?.series ?? {};
+
+  const inputs = raw?.inputs ?? {
+    sku: alias(raw, "sku"),
+    product: alias(raw, "product"),
+    current_inventory: alias(raw, "current_inventory"),
+    planned_inventory: alias(raw, "planned_inventory"),
+    selling_price: alias(raw, "selling_price"),
+    unit_cost: alias(raw, "unit_cost"),
+    expected_demand: alias(raw, "expected_demand"),
+    campaign: alias(raw, "campaign"),
+    spend: alias(raw, "spend"),
+    horizon_days: alias(raw, "horizon_days"),
+    assumptions: alias(raw, "assumptions"),
+  };
+
+  const evidence = Array.isArray(r?.evidence)
+    ? r.evidence.map((e) =>
+        typeof e === "string"
+          ? { label: e, value: undefined, detail: undefined }
+          : { label: alias(e, "label", "name") ?? "Evidence", value: alias(e, "value"), detail: alias(e, "detail", "note") }
+      )
+    : [];
+
+  return {
+    id: String(alias(raw, "id", "analysis_id", "run_id") ?? "—"),
+    status: String(alias(raw, "status", "state") ?? "complete").toLowerCase(),
+    createdAt: alias(raw, "created_at", "createdAt", "timestamp"),
+    inputs,
+    kpis: {
+      predictedRevenue: alias(k, "predicted_revenue", "projected_revenue", "revenue"),
+      projectedSpend: alias(k, "projected_spend", "planned_spend"),
+      spendDeltaPct: alias(k, "spend_delta_pct", "spend_change_pct"),
+      roas: alias(k, "roas", "roas_value"),
+      marginPct: alias(k, "margin_pct", "gross_margin_pct"),
+      inventoryRisk: alias(k, "inventory_risk", "risk_level"),
+      sellThroughPct: alias(k, "sell_through_pct"),
+      stockoutDay: alias(k, "stockout_day", "days_to_stockout"),
+    },
+    recommendation: {
+      action: alias(r, "action"),
+      headline: alias(r, "headline"),
+      reason: alias(r, "reason", "rationale", "explanation"),
+      confidence: alias(r, "confidence", "confidence_score"),
+      evidence,
+    },
+    series: {
+      inventory: mapSeries(alias(s, "inventory", "inventory_trajectory"), ["day", "x", "date"], { current: ["current", "projected", "stock"], planned: ["planned", "baseline"] }),
+      revenue: mapSeries(alias(s, "revenue", "revenue_projection"), ["day", "x", "date"], { baseline: ["baseline", "current"], projected: ["projected", "athena", "value"] }),
+      expense: mapSeries(alias(s, "expense", "expense_impact"), ["label", "channel", "name"], { current: ["current", "before"], proposed: ["proposed", "after"] }),
+      allocation: mapSeries(alias(s, "allocation", "budget"), ["label", "channel", "name"], { amount: ["amount", "spend", "value"] }),
+      scenarios: mapSeries(alias(s, "scenarios", "comparison"), ["name", "label", "scenario"], { roas: ["roas"], revenue: ["revenue", "predicted_revenue"], sellThrough: ["sell_through", "sell_through_pct"] }),
+    },
+    raw,
+  };
+}
+
+function mapSeries(arr, keyAliases, valAliases) {
+  if (!Array.isArray(arr) || arr.length === 0) return undefined;
+  return arr
+    .map((row) => {
+      const out = { __key: alias(row, ...keyAliases) };
+      for (const [field, aliases] of Object.entries(valAliases)) out[field] = alias(row, ...aliases);
+      return out;
+    })
+    .filter((r) => r.__key !== undefined || Object.values(r).some((v) => v !== undefined && v !== null));
+}
+```
+
+### `src/lib/api.js`
+
+```js
+import { normalizeResult } from "./contract";
+
+export const API_BASE = (import.meta.env.VITE_API_BASE_URL || "http://localhost:8000").replace(/\/+$/, "");
+
+export class ApiError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+}
+
+let onUnauthorized = null;
+export function setUnauthorizedHandler(fn) {
+  onUnauthorized = fn;
+}
+
+async function request(path, { method = "GET", body, token, signal } = {}) {
+  let res;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      signal,
+    });
+  } catch (e) {
+    throw new ApiError(0, "Cannot reach the Athena backend. Is it running?");
+  }
+  if (res.status === 401) onUnauthorized?.();
+  const data = res.status === 204 ? null : await res.json().catch(() => null);
+  if (!res.ok) {
+    const msg = data?.detail || data?.message || `Request failed (${res.status})`;
+    throw new ApiError(res.status, msg);
+  }
+  return data;
+}
+
+export const api = {
+  get: (path, token, signal) => request(path, { token, signal }),
+  post: (path, body, token) => request(path, { method: "POST", body, token }),
+};
+
+/**
+ * Poll an analysis until the backend reports completion.
+ * Used by Run Analysis and the detail screen while status = processing.
+ */
+export async function pollAnalysis(id, token, { interval = 1600, timeout = 90000, onUpdate } = {}) {
+  const t0 = Date.now();
+  for (;;) {
+    const normalized = normalizeResult(await api.get(`/analyses/${encodeURIComponent(id)}`, token));
+    onUpdate?.(normalized);
+    const s = (normalized?.status || "").toLowerCase();
+    if (["complete", "completed", "failed", "error"].includes(s)) return normalized;
+    if (Date.now() - t0 > timeout) {
+      throw new ApiError(408, "Analysis is still running after the time limit. Check History shortly.");
+    }
+    await new Promise((r) => setTimeout(r, interval));
+  }
+}
+```
+
+### `src/lib/hooks.js`
+
+```js
+import { useEffect, useRef, useState } from "react";
+import { useReducedMotion } from "framer-motion";
+
+export function usePageTitle(title) {
+  useEffect(() => {
+    document.title = title ? `${title} | Athena` : "Athena — Executive Intelligence";
+  }, [title]);
+}
+
+export function useScrollTopOnNavigate(pathname) {
+  const first = useRef(true);
+  useEffect(() => {
+    if (first.current) { first.current = false; return; }
+    window.scrollTo({ top: 0, behavior: "auto" });
+  }, [pathname]);
+}
+
+export function useElapsed(active) {
+  const [ms, setMs] = useState(0);
+  useEffect(() => {
+    if (!active) return;
+    setMs(0);
+    const t0 = Date.now();
+    const iv = setInterval(() => setMs(Date.now() - t0), 200);
+    return () => clearInterval(iv);
+  }, [active]);
+  return ms;
+}
+
+export function useRespectMotion() {
+  return !!useReducedMotion();
+}
+```
+
+### `src/state/AuthContext.jsx`
+
+```jsx
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { api, setUnauthorizedHandler } from "../lib/api";
+import { AUTH, normalizeSession } from "../lib/contract";
+
+const TOKEN_KEY = "athena.token";
+const USER_KEY = "athena.user";
+const Ctx = createContext(null);
+
+export function AuthProvider({ children }) {
+  const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY) || "");
+  const [user, setUser] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(USER_KEY) || "null"); } catch { return null; }
+  });
+
+  const clear = useCallback(() => {
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(USER_KEY);
+    setToken("");
+    setUser(null);
+  }, []);
+
+  useEffect(() => {
+    setUnauthorizedHandler(clear);
+    return () => setUnauthorizedHandler(null);
+  }, [clear]);
+
+  const persist = useCallback((session) => {
+    if (!session.token) throw new Error("Backend did not return an auth token.");
+    localStorage.setItem(TOKEN_KEY, session.token);
+    if (session.username) localStorage.setItem(USER_KEY, JSON.stringify({ username: session.username }));
+    setToken(session.token);
+    setUser(session.username ? { username: session.username } : null);
+    return session;
+  }, []);
+
+  const login = useCallback(
+    async (username, password) => persist(normalizeSession(await api.post(AUTH.loginPath, { username, password }))),
+    [persist]
+  );
+
+  const register = useCallback(
+    async (username, password) => persist(normalizeSession(await api.post(AUTH.registerPath, { username, password }))),
+    [persist]
+  );
+
+  const logout = useCallback(() => clear(), [clear]);
+
+  const value = useMemo(() => ({ token, user, login, register, logout }), [token, user, login, register, logout]);
+  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+}
+
+export function useAuth() {
+  const ctx = useContext(Ctx);
+  if (!ctx) throw new Error("useAuth must be used inside AuthProvider");
+  return ctx;
+}
+```
+
+### `src/components/AthenaMark.jsx`
+
+```jsx
+/* Inline recreation of the Athena foil emblem:
+   spear-formed "A", shield arc (left), laurel branch (right).
+   Swap for the supplied asset by replacing the paths below. */
+export default function AthenaMark({ size = 28, ...rest }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 64 64"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      role="img"
+      aria-label="Athena monogram"
+      {...rest}
+    >
+      <path d="M32 2.5c-2.9 4.2-2.9 7.9 0 11.4 2.9-3.5 2.9-7.2 0-11.4Z" />
+      <path d="M32 14v44" />
+      <path d="M28.2 17.6h7.6" />
+      <path d="M12.5 58 32 16.5 51.5 58" />
+      <path d="M21.8 43.5h20.4" />
+      <path d="M17.5 47.5c7-4.6 18-4.9 26-.8" strokeWidth="1.1" />
+      <path d="M25.5 44.2c.6-2.4 2.2-4 4.6-4.9-.3 2.5-1.7 4.2-4.6 4.9Z" strokeWidth="1.1" />
+      <path d="M34.5 43.7c1.8-1.9 3.8-2.7 6.2-2.4-1.2 2.2-3.2 3.1-6.2 2.4Z" strokeWidth="1.1" />
+      <path d="M19.5 25.5C12.7 29.8 10 38.6 14.6 47.6c2.3 4.4 5.6 7.6 9 9.4" />
+      <path d="M23.8 29.6c-5 3.4-6.8 9.6-3.6 16.2 1.5 3 3.6 5.4 5.9 7" strokeWidth="1.1" />
+      <path d="M45.5 54.5C52.6 45 55.2 31.5 50.8 18.5" />
+      <path d="M48.9 47.2c2.8-.9 5.4-.4 7.6 1.6-2.7 1.4-5.3 1.2-7.6-1.6Z" strokeWidth="1.1" />
+      <path d="M50.6 39.2c2.8-.9 5.4-.4 7.6 1.6-2.7 1.4-5.3 1.2-7.6-1.6Z" strokeWidth="1.1" />
+      <path d="M47.9 31.4c-2.9-.7-5.5 0-7.6 2.2 2.8 1.2 5.4.8 7.6-2.2Z" strokeWidth="1.1" />
+      <path d="M50 23.4c2.9-.8 5.5-.2 7.6 1.9-2.8 1.3-5.4.9-7.6-1.9Z" strokeWidth="1.1" />
+    </svg>
+  );
+}
+
+export function Brandline({ size = 30 }) {
+  return (
+    <div className="brandline">
+      <AthenaMark size={size} />
+      <div>
+        <div className="wordmark">ATHENA</div>
+        <div className="tag">Executive Intelligence</div>
+      </div>
+    </div>
+  );
+}
+```
+
+### `src/components/ui.jsx`
+
+```jsx
+import { Eye, EyeOff, Inbox } from "lucide-react";
+import { useState } from "react";
+import { confidencePct } from "../lib/format";
+
+export function Eyebrow({ children }) {
+  return <div className="eyebrow">{children}</div>;
+}
+
+export function Field({ id, label, type = "text", value, onChange, placeholder, required, min, step, autoComplete, error, hint, optional }) {
+  const [show, setShow] = useState(false);
+  const isPw = type === "password";
+  const inputType = isPw && show ? "text" : type;
+  return (
+    <div className="field">
+      <label htmlFor={id}>
+        {label}
+        {optional && <span className="opt"> · optional</span>}
+      </label>
+      {isPw ? (
+        <div className="pw-wrap">
+          <input
+            id={id}
+            className={`input${error ? " err" : ""}`}
+            type={inputType}
+            value={value}
+            onChange={onChange}
+            placeholder={placeholder}
+            required={required}
+            aria-required={required || undefined}
+            aria-invalid={!!error || undefined}
+            autoComplete={autoComplete}
+          />
+          <button type="button" className="pw-eye" onClick={() => setShow((s) => !s)}
+            aria-label={show ? "Hide password" : "Show password"}>
+            {show ? <EyeOff size={15} /> : <Eye size={15} />}
+          </button>
+        </div>
+      ) : (
+        <input
+          id={id}
+          className={`input${error ? " err" : ""}`}
+          type={inputType}
+          value={value}
+          onChange={onChange}
+          placeholder={placeholder}
+          required={required}
+          min={min}
+          step={step}
+          aria-required={required || undefined}
+          aria-invalid={!!error || undefined}
+          autoComplete={autoComplete}
+        />
+      )}
+      {error ? (
+        <div className="ferr" role="alert">{error}</div>
+      ) : hint ? (
+        <div className="fhint">{hint}</div>
+      ) : null}
+    </div>
+  );
+}
+
+export function Banner({ tone = "error", children }) {
+  return (
+    <div className={`banner${tone === "ok" ? " banner--ok" : ""}`} role={tone === "error" ? "alert" : "status"}>
+      {children}
+    </div>
+  );
+}
+
+export function StatusPill({ status }) {
+  const s = String(status || "").toLowerCase();
+  const cls = ["complete", "completed", "done"].includes(s) ? "pill--ok"
+    : ["processing", "running", "pending", "queued"].includes(s) ? "pill--run"
+    : ["failed", "error"].includes(s) ? "pill--bad" : "";
+  return (
+    <span className={`pill ${cls}`}>
+      <i aria-hidden="true" />
+      {s || "unknown"}
+    </span>
+  );
+}
+
+export function EmptyState({ icon: Icon = Inbox, title, hint, children }) {
+  return (
+    <div className="empty">
+      <Icon size={26} strokeWidth={1.5} aria-hidden="true" />
+      <h3>{title}</h3>
+      {hint && <p>{hint}</p>}
+      {children}
+    </div>
+  );
+}
+
+export function StatCard({ label, value, sub, tone }) {
+  return (
+    <div className="panel stat">
+      <div className="klabel">{label}</div>
+      <div className="kvalue">{value}</div>
+      {sub && <div className={`ksub ${tone || ""}`}>{sub}</div>}
+    </div>
+  );
+}
+
+export function Meter({ value }) {
+  const p = confidencePct(value);
+  if (p === null) return null;
+  return (
+    <div className="meterline">
+      <div className="meter" role="img" aria-label={`Confidence ${Math.round(p)} percent`}>
+        <span style={{ width: `${Math.max(2, Math.min(100, p))}%` }} />
+      </div>
+      <div className="meterlabel">Confidence {Math.round(p)}%</div>
+    </div>
+  );
+}
+```
+
+### `src/components/charts.jsx`
+
+```jsx
+import {
+  Area, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Line, Pie, PieChart,
+  ResponsiveContainer, Tooltip, XAxis, YAxis,
+} from "recharts";
+import { CircleDot } from "lucide-react";
+import { money, num, roas } from "../lib/format";
+
+const GOLD = "#d6b985";
+const SLATE = "#7c8798";
+const GRID = "rgba(233,221,196,0.07)";
+const AXIS = "#6b7382";
+const DONUT = ["#d6b985", "#b99b66", "#8b7448", "#5e6b80", "#3e4a5e", "#2c3648", "#8fa5a0"];
+
+function ChartTip({ active, payload, label, fmt }) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="tip">
+      <div className="t-label">{label}</div>
+      {payload.map((p) => (
+        <div className="t-row" key={p.name}>
+          <i style={{ background: p.color || p.fill }} />
+          {p.name}: {fmt ? fmt(p.value) : num(p.value)}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function ChartFrame({ title, question, summary, span = 6, children, footer }) {
+  return (
+    <div className="panel chart-card" style={{ gridColumn: `span ${span}` }} role="group" aria-label={summary || title}>
+      <h3>{title}</h3>
+      {question && <div className="q">{question}</div>}
+      <div style={{ marginTop: 14 }}>{children}</div>
+      {footer}
+    </div>
+  );
+}
+
+export function EmptyChart({ label }) {
+  return (
+    <div className="empty" style={{ padding: "34px 20px" }}>
+      <CircleDot size={20} strokeWidth={1.5} aria-hidden="true" />
+      <p style={{ fontSize: 12.5 }}>
+        No {label} series was returned for this analysis — the backend did not provide it.
+      </p>
+    </div>
+  );
+}
+
+const axisProps = {
+  stroke: AXIS,
+  tickLine: false,
+  tick: { fontSize: 11, fill: AXIS },
+};
+
+/* Answers: will stock cover demand through the horizon? */
+export function InventoryChart({ series }) {
+  const data = series?.inventory;
+  if (!data?.length) return <EmptyChart label="inventory trajectory" />;
+  return (
+    <ResponsiveContainer width="100%" height={250}>
+      <ComposedChart data={data} margin={{ top: 6, right: 6, bottom: 0, left: -14 }}>
+        <CartesianGrid stroke={GRID} vertical={false} />
+        <XAxis dataKey="__key" {...axisProps} axisLine={{ stroke: GRID }} />
+        <YAxis {...axisProps} axisLine={false} width={48} />
+        <Tooltip content={<ChartTip fmt={(v) => `${num(v)} units`} />} cursor={{ fill: "rgba(233,221,196,0.04)" }} />
+        <Area type="monotone" dataKey="current" name="Projected stock" stroke={GOLD} fill="rgba(214,185,133,0.10)" strokeWidth={1.8} />
+        <Line type="monotone" dataKey="planned" name="Planned stock" stroke={SLATE} strokeDasharray="4 4" strokeWidth={1.3} dot={false} />
+      </ComposedChart>
+    </ResponsiveContainer>
+  );
+}
+
+/* Answers: what revenue does the plan produce vs the current baseline? */
+export function RevenueChart({ series }) {
+  const data = series?.revenue;
+  if (!data?.length) return <EmptyChart label="revenue projection" />;
+  return (
+    <ResponsiveContainer width="100%" height={250}>
+      <ComposedChart data={data} margin={{ top: 6, right: 6, bottom: 0, left: -6 }}>
+        <CartesianGrid stroke={GRID} vertical={false} />
+        <XAxis dataKey="__key" {...axisProps} axisLine={{ stroke: GRID }} />
+        <YAxis {...axisProps} axisLine={false} width={56} tickFormatter={(v) => money(v)} />
+        <Tooltip content={<ChartTip fmt={money} />} cursor={{ fill: "rgba(233,221,196,0.04)" }} />
+        <Area type="monotone" dataKey="projected" name="Athena plan" stroke={GOLD} fill="rgba(214,185,133,0.10)" strokeWidth={1.8} />
+        <Line type="monotone" dataKey="baseline" name="Current baseline" stroke={SLATE} strokeDasharray="4 4" strokeWidth={1.3} dot={false} />
+      </ComposedChart>
+    </ResponsiveContainer>
+  );
+}
+
+/* Answers: where does spend shift, and by how much? */
+export function ExpenseChart({ series, kpis, inputs }) {
+  let data = null;
+  let mode = "none";
+  if (series?.expense?.length) {
+    data = series.expense;
+    mode = "channels";
+  } else if (kpis?.projectedSpend != null || inputs?.spend != null) {
+    data = [
+      { __key: "Current", current: inputs?.spend ?? null, proposed: inputs?.spend ?? null },
+      { __key: "Projected", current: null, proposed: kpis?.projectedSpend ?? null },
+    ];
+    mode = "totals";
+  }
+  if (!data) return <EmptyChart label="expense impact" />;
+  return mode === "channels" ? (
+    <>
+      <ResponsiveContainer width="100%" height={250}>
+        <BarChart data={data} margin={{ top: 6, right: 6, bottom: 0, left: -6 }} barGap={3}>
+          <CartesianGrid stroke={GRID} vertical={false} />
+          <XAxis dataKey="__key" {...axisProps} axisLine={{ stroke: GRID }} />
+          <YAxis {...axisProps} axisLine={false} width={56} tickFormatter={(v) => money(v)} />
+          <Tooltip content={<ChartTip fmt={money} />} cursor={{ fill: "rgba(233,221,196,0.04)" }} />
+          <Bar dataKey="current" name="Current" fill={SLATE} radius={[3, 3, 0, 0]} maxBarSize={26} />
+          <Bar dataKey="proposed" name="Athena plan" fill={GOLD} radius={[3, 3, 0, 0]} maxBarSize={26} />
+        </BarChart>
+      </ResponsiveContainer>
+      <div className="legend" aria-hidden="true">
+        <span><i style={{ background: SLATE }} />Current</span>
+        <span><i style={{ background: GOLD }} />Athena plan</span>
+      </div>
+    </>
+  ) : (
+    <ResponsiveContainer width="100%" height={180}>
+      <BarChart data={data} layout="vertical" margin={{ top: 0, right: 20, bottom: 0, left: 10 }}>
+        <CartesianGrid stroke={GRID} horizontal={false} />
+        <XAxis type="number" {...axisProps} axisLine={{ stroke: GRID }} tickFormatter={(v) => money(v)} />
+        <YAxis type="category" dataKey="__key" {...axisProps} axisLine={false} width={78} />
+        <Tooltip content={<ChartTip fmt={money} />} cursor={{ fill: "rgba(233,221,196,0.04)" }} />
+        <Bar dataKey="proposed" name="Spend" fill={GOLD} radius={[0, 3, 3, 0]} maxBarSize={22}>
+          {data.map((d, i) => <Cell key={i} fill={i === 0 ? SLATE : GOLD} />)}
+        </Bar>
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+/* Answers: how is budget distributed across channels? */
+export function AllocationDonut({ series }) {
+  const data = series?.allocation;
+  if (!data?.length) return <EmptyChart label="budget allocation" />;
+  const total = data.reduce((a, d) => a + (d.amount || 0), 0);
+  return (
+    <div className="donut-wrap">
+      <ResponsiveContainer width="100%" height={230}>
+        <PieChart>
+          <Tooltip content={<ChartTip fmt={money} />} />
+          <Pie data={data} dataKey="amount" nameKey="__key" innerRadius="62%" outerRadius="86%" paddingAngle={2} stroke="none">
+            {data.map((_, i) => <Cell key={i} fill={DONUT[i % DONUT.length]} />)}
+          </Pie>
+        </PieChart>
+      </ResponsiveContainer>
+      <div className="donut-center">
+        <div>
+          <div className="dc-v">{money(total)}</div>
+          <div className="dc-k">Total budget</div>
+        </div>
+      </div>
+      <div className="legend">
+        {data.map((d, i) => (
+          <span key={i}><i style={{ background: DONUT[i % DONUT.length] }} />{d.__key}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* Answers: why Athena's plan over the current plan? */
+export function ScenarioComparison({ series }) {
+  const rows = series?.scenarios;
+  if (!rows?.length) return <EmptyChart label="scenario comparison" />;
+  const max = {
+    roas: Math.max(...rows.map((r) => r.roas || 0), 0.0001),
+    revenue: Math.max(...rows.map((r) => r.revenue || 0), 0.0001),
+    sellThrough: Math.max(...rows.map((r) => r.sellThrough || 0), 0.0001),
+  };
+  const Bar3 = ({ v, m, fmt }) =>
+    v == null ? <div className="sv">—</div> : (
+      <div className="sbar-cell">
+        <div className="sbar"><span style={{ width: `${Math.max(3, (v / m) * 100)}%` }} /></div>
+        <div className="sv">{fmt(v)}</div>
+      </div>
+    );
+  return (
+    <div className="scen">
+      <div className="scen-head"><span>Scenario</span><span>ROAS</span><span>Revenue</span><span>Sell-through</span></div>
+      {rows.map((r, i) => (
+        <div className="scen-row" key={i}>
+          <div className="scen-name">{r.__key}</div>
+          <Bar3 v={r.roas} m={max.roas} fmt={roas} />
+          <Bar3 v={r.revenue} m={max.revenue} fmt={money} />
+          <Bar3 v={r.sellThrough} m={max.sellThrough} fmt={(v) => `${v}%`} />
+        </div>
+      ))}
+    </div>
+  );
+}
+```
+
+### `src/components/ResultReport.jsx`
+
+```jsx
+import { motion } from "framer-motion";
+import { ChevronDown } from "lucide-react";
+import { humanAction, money, num, pctPoint, roas } from "../lib/format";
+import { EmptyState, Eyebrow, Meter, StatCard } from "./ui";
+import { AllocationDonut, ChartFrame, ExpenseChart, InventoryChart, RevenueChart, ScenarioComparison } from "./charts";
+
+const RISK_TONE = { low: "pos", medium: "amb", moderate: "amb", high: "neg", critical: "neg" };
+
+const INPUT_ROWS = [
+  ["SKU", "sku"], ["Product", "product"],
+  ["Current inventory", "current_inventory", num], ["Planned inventory", "planned_inventory", num],
+  ["Selling price", "selling_price", money], ["Unit cost", "unit_cost", money],
+  ["Expected demand", "expected_demand", num], ["Campaign", "campaign"],
+  ["Spend", "spend", money], ["Horizon", "horizon_days", (v) => (v != null ? `${v} days` : undefined)],
+  ["Assumptions", "assumptions"],
+];
+
+function KpiBand({ kpis, inputs }) {
+  const cards = [];
+  if (kpis.predictedRevenue != null)
+    cards.push({ label: "Projected revenue", value: money(kpis.predictedRevenue) });
+  if (kpis.roas != null) cards.push({ label: "ROAS", value: roas(kpis.roas) });
+  if (kpis.marginPct != null) cards.push({ label: "Margin", value: `${kpis.marginPct}%` });
+  if (kpis.projectedSpend != null)
+    cards.push({
+      label: "Projected spend",
+      value: money(kpis.projectedSpend),
+      sub: kpis.spendDeltaPct != null ? `${pctPoint(kpis.spendDeltaPct)} vs current` : undefined,
+      tone: kpis.spendDeltaPct != null ? (kpis.spendDeltaPct <= 0 ? "pos" : "amb") : undefined,
+    });
+  if (kpis.inventoryRisk != null)
+    cards.push({ label: "Inventory risk", value: String(kpis.inventoryRisk).toUpperCase(), tone: RISK_TONE[String(kpis.inventoryRisk).toLowerCase()] || "" });
+  if (kpis.sellThroughPct != null) cards.push({ label: "Sell-through", value: `${kpis.sellThroughPct}%` });
+  if (kpis.stockoutDay != null) cards.push({ label: "Stockout day", value: num(kpis.stockoutDay) });
+
+  if (!cards.length)
+    return (
+      <EmptyState title="No KPI fields returned" hint="The backend completed this run but did not include KPI fields. Nothing is shown rather than guessed." />
+    );
+
+  return (
+    <div className="charts">
+      {cards.map((c, i) => (
+        <div key={i} style={{ gridColumn: "span 3", minWidth: 0 }}>
+          <StatCard {...c} />
+        </div>
+      ))}
+      {/* keep the 12-col grid tidy when card count isn't a multiple of 4 */}
+      <style>{`@media (max-width: 1120px){ .charts > [style*="span 3"]{ grid-column: span 6 !important; } }`}</style>
+      {inputs ? null : null}
+    </div>
+  );
+}
+
+export function Recommendation({ rec }) {
+  const evidence = rec?.evidence ?? [];
+  return (
+    <div className="panel reco">
+      <Eyebrow>Athena recommends</Eyebrow>
+      <div className="action">{rec?.headline || humanAction(rec?.action) || "Review required"}</div>
+      {rec?.reason ? <p className="reason">{rec.reason}</p> : (
+        <p className="reason">No written rationale was returned for this run.</p>
+      )}
+      {evidence.length > 0 && (
+        <div className="chips">
+          {evidence.map((e, i) => (
+            <span className="chip" key={i}>
+              {e.label}
+              {e.value != null && e.value !== "" ? <>: <b>{e.value}</b></> : null}
+              {e.detail ? <> — {e.detail}</> : null}
+            </span>
+          ))}
+        </div>
+      )}
+      <Meter value={rec?.confidence} />
+      {evidence.length > 0 && (
+        <details className="raw" style={{ marginTop: 18 }}>
+          <summary><ChevronDown size={13} aria-hidden="true" /> Inspect supporting data</summary>
+          <div className="defgrid" style={{ marginTop: 14 }}>
+            {evidence.map((e, i) => (
+              <div className="def" key={i}>
+                <div className="dt">{e.label}</div>
+                <div className="dd">{e.value ?? "—"}{e.detail ? ` · ${e.detail}` : ""}</div>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}
+
+export default function ResultReport({ result }) {
+  if (!result) return null;
+  const { kpis, series, inputs, recommendation } = result;
+  const chartMotion = {
+    initial: { opacity: 0, y: 12 },
+    animate: { opacity: 1, y: 0 },
+    transition: { duration: 0.45, ease: [0.22, 1, 0.36, 1] },
+  };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+      <motion.section {...chartMotion}>
+        <Eyebrow>Key metrics</Eyebrow>
+        <div style={{ marginTop: 14 }}>
+          <KpiBand kpis={kpis} />
+        </div>
+      </motion.section>
+
+      <motion.section {...chartMotion} transition={{ ...chartMotion.transition, delay: 0.06 }}>
+        {recommendation?.action || recommendation?.headline ? (
+          <Recommendation rec={recommendation} />
+        ) : (
+          <div className="panel">
+            <EmptyState title="No recommendation returned" hint="Athena did not return a recommendation object for this analysis." />
+          </div>
+        )}
+      </motion.section>
+
+      <motion.section {...chartMotion} transition={{ ...chartMotion.transition, delay: 0.12 }}>
+        <Eyebrow>Trajectories</Eyebrow>
+        <div className="charts" style={{ marginTop: 14 }}>
+          <ChartFrame span={7} title="Inventory trajectory" question="Will stock cover projected demand through the horizon?">
+            <InventoryChart series={series} />
+          </ChartFrame>
+          <ChartFrame span={5} title="Revenue projection" question="What revenue does the plan produce vs the current baseline?">
+            <RevenueChart series={series} />
+          </ChartFrame>
+          <ChartFrame span={7} title="Expense impact" question="Where does spend shift, and by how much?">
+            <ExpenseChart series={series} kpis={kpis} inputs={inputs} />
+          </ChartFrame>
+          <ChartFrame span={5} title="Budget allocation" question="How is budget distributed across channels?">
+            <AllocationDonut series={series} />
+          </ChartFrame>
+          {series?.scenarios?.length ? (
+            <ChartFrame span={12} title="Scenario comparison" question="Why Athena's plan over the current plan?">
+              <ScenarioComparison series={series} />
+            </ChartFrame>
+          ) : null}
+        </div>
+      </motion.section>
+
+      <motion.section {...chartMotion} transition={{ ...chartMotion.transition, delay: 0.18 }}>
+        <Eyebrow>Scenario inputs</Eyebrow>
+        <div className="defgrid" style={{ marginTop: 14 }}>
+          {INPUT_ROWS.map(([label, key, fmt]) => {
+            const v = inputs?.[key];
+            const shown = v == null || v === "" ? "—" : fmt ? fmt(v) : String(v);
+            return (
+              <div className="def" key={key}>
+                <div className="dt">{label}</div>
+                <div className="dd">{shown}</div>
+              </div>
+            );
+          })}
+        </div>
+        <details className="raw" style={{ marginTop: 16 }}>
+          <summary><ChevronDown size={13} aria-hidden="true" /> Inspect raw response</summary>
+          <pre>{JSON.stringify(result.raw, null, 2)}</pre>
+        </details>
+      </motion.section>
+    </div>
+  );
+}
+```
+
+### `src/screens/IntroSequence.jsx`
+
+```jsx
+import { animate, motion, useReducedMotion } from "framer-motion";
+import { useEffect, useRef, useState } from "react";
+import AthenaMark from "../components/AthenaMark";
+
+/**
+ * Brand opening.
+ * 1. If public/intro.mp4 exists it is played as the opening sequence.
+ * 2. Otherwise a motion-built intro plays the same visual grammar:
+ *    ink canvas · mark draw-in · progress frame + counting percentage.
+ * Both paths end in a split-curtain reveal into authentication.
+ */
+export default function IntroSequence({ onDone }) {
+  const reduced = useReducedMotion();
+  const [mode, setMode] = useState("brand");       // brand | video
+  const [videoReady, setVideoReady] = useState(false);
+  const [n, setN] = useState(0);
+  const [reveal, setReveal] = useState(false);
+  const doneRef = useRef(false);
+  const videoRef = useRef(null);
+
+  const finish = () => {
+    if (doneRef.current) return;
+    doneRef.current = true;
+    setReveal(true);
+    setTimeout(onDone, 900);
+  };
+
+  useEffect(() => {
+    if (reduced) {
+      const t = setTimeout(finish, 350);
+      return () => clearTimeout(t);
+    }
+    const controls = animate(0, 100, {
+      duration: 3.9,
+      ease: [0.4, 0, 0.2, 1],
+      onUpdate: (v) => setN(Math.round(v)),
+      onComplete: () => finish(),
+    });
+    return () => controls.stop();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reduced]);
+
+  useEffect(() => {
+    if (mode === "video" && videoRef.current) {
+      videoRef.current.play().catch(() => setMode("brand"));
+    }
+  }, [mode]);
+
+  const revealEase = [0.76, 0, 0.24, 1];
+
+  return (
+    <div className="intro" aria-label="Athena opening animation">
+      {/* curtains — part to reveal the app */}
+      <motion.div className="curtain curtain--t" initial={{ y: 0 }} animate={reveal ? { y: "-100.5%" } : { y: 0 }} transition={{ duration: 0.85, ease: revealEase }} />
+      <motion.div className="curtain curtain--b" initial={{ y: 0 }} animate={reveal ? { y: "100.5%" } : { y: 0 }} transition={{ duration: 0.85, ease: revealEase }} />
+
+      <motion.div className="intro-content" animate={{ opacity: reveal ? 0 : 1 }} transition={{ duration: 0.25 }}>
+        {/* provided brand video (auto-detected) */}
+        <video
+          ref={videoRef}
+          className={`intro-video${mode === "video" && videoReady ? " on" : ""}`}
+          src={`${import.meta.env.BASE_URL}intro.mp4`}
+          muted
+          playsInline
+          preload="auto"
+          onCanPlay={() => { setVideoReady(true); setMode("video"); }}
+          onError={() => setMode("brand")}
+          onEnded={finish}
+        />
+
+        {/* fallback brand intro — same grammar as the video */}
+        <motion.div
+          className="intro-brand"
+          initial={{ opacity: 1 }}
+          animate={{ opacity: mode === "video" && videoReady ? 0 : 1 }}
+          transition={{ duration: 0.5 }}
+        >
+          <div className="intro-frame" aria-hidden="true" />
+          {mode === "brand" && (
+            <div
+              className="intro-progress"
+              style={{ width: `${n * 0.6}%` }}
+              aria-hidden="true"
+            />
+          )}
+          <motion.div
+            className="intro-brand-inner"
+            initial={{ opacity: 0, scale: 0.97 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.9, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <AthenaMark size={92} strokeWidth={1.3} />
+            <div style={{ textAlign: "center" }}>
+              <div style={{ font: "600 19px/1 var(--font-display)", letterSpacing: "0.5em", paddingLeft: "0.5em", color: "var(--text-hi)" }}>
+                ATHENA
+              </div>
+              <div className="eyebrow" style={{ marginTop: 12 }}>Executive Intelligence</div>
+            </div>
+          </motion.div>
+          {mode === "brand" && (
+            <div className="intro-count" aria-hidden="true">
+              {n}%
+            </div>
+          )}
+        </motion.div>
+      </motion.div>
+
+      <button className="btn btn--ghost btn--sm intro-skip" onClick={finish}>
+        Skip intro
+      </button>
+    </div>
+  );
+}
+```
+
+### `src/screens/Auth.jsx`
+
+```jsx
+import { AnimatePresence, motion } from "framer-motion";
+import { ArrowRight, Check } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Navigate, useLocation, useNavigate } from "react-router-dom";
+import { Brandline } from "../components/AthenaMark";
+import { Banner, Field } from "../components/ui";
+import { nextQuote, QUOTES, randomQuote } from "../lib/quotes";
+import { useAuth } from "../state/AuthContext";
+import { usePageTitle } from "../lib/hooks";
+
+export default function Auth() {
+  usePageTitle("Sign in");
+  const { token, user, login, register } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [mode, setMode] = useState("login");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [errors, setErrors] = useState({});
+  const [apiError, setApiError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [granted, setGranted] = useState(false);
+  const [qi, setQi] = useState(() => QUOTES.indexOf(randomQuote()));
+
+  useEffect(() => {
+    const t = setInterval(() => setQi((i) => nextQuote(i)), 9000);
+    return () => clearInterval(t);
+  }, []);
+  const quote = QUOTES[qi];
+
+  if (token) return <Navigate to={location.state?.from?.pathname || "/"} replace />;
+
+  const validate = () => {
+    const e = {};
+    if (username.trim().length < 3) e.username = "Username must be at least 3 characters.";
+    if (password.length < 6) e.password = "Password must be at least 6 characters.";
+    if (mode === "signup" && confirm !== password) e.confirm = "Passwords do not match.";
+    return e;
+  };
+
+  async function submit(ev) {
+    ev.preventDefault();
+    setApiError("");
+    const e = validate();
+    setErrors(e);
+    if (Object.keys(e).length) return;
+    setBusy(true);
+    try {
+      if (mode === "login") await login(username.trim(), password);
+      else await register(username.trim(), password);
+      setGranted(true);
+      setTimeout(() => navigate(location.state?.from?.pathname || "/", { replace: true }), 550);
+    } catch (err) {
+      setApiError(err.message || "Authentication failed.");
+      setBusy(false);
+    }
+  }
+
+  function switchMode(next) {
+    setMode(next);
+    setErrors({});
+    setApiError("");
+  }
+
+  return (
+    <div className="auth">
+      <div className="auth-brand">
+        <Brandline />
+        <div className="quote" aria-live="polite">
+          <AnimatePresence mode="wait">
+            <motion.blockquote
+              key={qi}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+            >
+              <p>“{quote.text}”</p>
+              <div className="quote-author">— {quote.author}</div>
+            </motion.blockquote>
+          </AnimatePresence>
+        </div>
+      </div>
+
+      <div className="auth-form">
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={mode}
+            className="auth-card"
+            initial={{ opacity: 0, y: 14 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <div>
+              <div className="eyebrow">{mode === "login" ? "Access" : "Enrollment"}</div>
+              <h1 style={{ marginTop: 10 }}>{mode === "login" ? "Sign in" : "Create account"}</h1>
+              <p className="sub" style={{ marginTop: 8 }}>
+                {mode === "login"
+                  ? "Authenticate to enter the Athena command center."
+                  : "Provision credentials for the Athena command center."}
+              </p>
+            </div>
+
+            {apiError && <Banner>{apiError}</Banner>}
+            {granted && (
+              <Banner tone="ok">
+                <Check size={15} aria-hidden="true" /> Access granted. Entering Athena…
+              </Banner>
+            )}
+
+            <form onSubmit={submit} noValidate style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              <Field
+                id="username"
+                label="Username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                autoComplete="username"
+                required
+                error={errors.username}
+                placeholder="operative.name"
+              />
+              <Field
+                id="password"
+                label="Password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete={mode === "login" ? "current-password" : "new-password"}
+                required
+                error={errors.password}
+                hint="Minimum 6 characters."
+                placeholder="••••••••"
+              />
+              {mode === "signup" && (
+                <Field
+                  id="confirm"
+                  label="Confirm password"
+                  type="password"
+                  value={confirm}
+                  onChange={(e) => setConfirm(e.target.value)}
+                  autoComplete="new-password"
+                  required
+                  error={errors.confirm}
+                  placeholder="••••••••"
+                />
+              )}
+              <button className="btn" type="submit" disabled={busy || granted} style={{ justifyContent: "center", marginTop: 4 }}>
+                {busy ? "Authenticating…" : mode === "login" ? "Sign in" : "Create account"}
+                {!busy && <ArrowRight size={15} aria-hidden="true" />}
+              </button>
+            </form>
+
+            <div className="auth-swap">
+              {mode === "login" ? (
+                <>
+                  Don&apos;t have an account?{" "}
+                  <button type="button" onClick={() => switchMode("signup")}>Sign up</button>
+                </>
+              ) : (
+                <>
+                  Have credentials?{" "}
+                  <button type="button" onClick={() => switchMode("login")}>Sign in</button>
+                </>
+              )}
+            </div>
+            {user && <div className="mono" style={{ textAlign: "center" }}>last session: {user.username}</div>}
+          </motion.div>
+        </AnimatePresence>
+      </div>
+    </div>
+  );
+}
+```
+
+### `src/screens/command/CommandShell.jsx`
+
+```jsx
+import { Crosshair, Database, History, LogOut, Play } from "lucide-react";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { AnimatePresence, motion } from "framer-motion";
+import { Brandline } from "../../components/AthenaMark";
+import { usePageTitle, useScrollTopOnNavigate } from "../../lib/hooks";
+import { useAuth } from "../../state/AuthContext";
+
+const NAV = [
+  { to: "/", label: "Command", icon: Crosshair, end: true },
+  { to: "/history", label: "Analysis History", icon: History },
+  { to: "/run", label: "Run Analysis", icon: Play },
+  { to: "/references", label: "Data References", icon: Database },
+];
+
+export default function CommandShell() {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
+  useScrollTopOnNavigate(location.pathname);
+
+  const name = user?.username || "Operative";
+  return (
+    <div className="shell">
+      <a className="skip" href="#main">Skip to content</a>
+      <aside className="side">
+        <NavLink to="/" aria-label="Athena home">
+          <Brandline size={26} />
+        </NavLink>
+        <nav className="side-nav" aria-label="Primary">
+          {NAV.map(({ to, label, icon: Icon, end }) => (
+            <NavLink key={to} to={to} end={end} className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}>
+              <Icon aria-hidden="true" />
+              {label}
+            </NavLink>
+          ))}
+        </nav>
+        <div className="side-foot">
+          <div className="userchip">
+            <div className="avatar" aria-hidden="true">{name.slice(0, 1)}</div>
+            <div>
+              <div className="u-name">{name}</div>
+              <div className="mono">operative</div>
+            </div>
+          </div>
+          <button
+            className="signout"
+            onClick={() => { logout(); navigate("/auth", { replace: true }); }}
+          >
+            <LogOut size={14} aria-hidden="true" />
+            <span>Sign out</span>
+          </button>
+        </div>
+      </aside>
+
+      <main className="main" id="main">
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.div
+            key={location.pathname}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <Outlet />
+          </motion.div>
+        </AnimatePresence>
+      </main>
+    </div>
+  );
+}
+```
+
+### `src/screens/command/Home.jsx`
+
+```jsx
+import { ArrowUpRight } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { motion } from "framer-motion";
+import { API_BASE, api } from "../../lib/api";
+import { normalizeSummaries } from "../../lib/contract";
+import { relTime } from "../../lib/format";
+import { usePageTitle } from "../../lib/hooks";
+import { useAuth } from "../../state/AuthContext";
+import { DECLARED_SOURCES } from "../../data/provenance";
+
+function greeting() {
+  const h = new Date().getHours();
+  return h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
+}
+
+export default function Home() {
+  usePageTitle("Command");
+  const { token, user } = useAuth();
+  const navigate = useNavigate();
+  const [apiState, setApiState] = useState("checking");
+  const [count, setCount] = useState(null);
+  const [lastRun, setLastRun] = useState(null);
+  const [syncedAt, setSyncedAt] = useState(null);
+
+  useEffect(() => {
+    let live = true;
+    api.get("/analyses", token)
+      .then((d) => {
+        if (!live) return;
+        const list = normalizeSummaries(d);
+        setCount(list.length);
+        setLastRun(list[0] ?? null);
+        setSyncedAt(new Date());
+        setApiState("ok");
+      })
+      .catch(() => live && setApiState("down"));
+    return () => { live = false; };
+  }, [token]);
+
+  const modes = [
+    {
+      to: "/history", idx: "01", title: "Analysis History",
+      desc: "Every analysis Athena has run — predictions, recommendations and their outcomes.",
+      meta1: count != null ? `${count} record${count === 1 ? "" : "s"}` : "Records unavailable",
+      meta2: lastRun ? `Last run ${lastRun.id} · ${relTime(lastRun.createdAt)}` : "No runs yet",
+    },
+    {
+      to: "/run", idx: "02", title: "Run Analysis",
+      desc: "Submit a custom inventory and campaign scenario. Athena models it and returns a directive.",
+      meta1: "Custom scenario",
+      meta2: "Typical run under a minute",
+    },
+    {
+      to: "/references", idx: "03", title: "Data References",
+      desc: "Provenance for every field Athena consumes — sources, transformations, limitations.",
+      meta1: `${DECLARED_SOURCES.length} declared sources`,
+      meta2: "Audit trail",
+    },
+  ];
+
+  return (
+    <div className="page">
+      <header className="page-head">
+        <div>
+          <div className="eyebrow">Command center</div>
+          <h1>{greeting()}, {user?.username || "Operative"}.</h1>
+          <p className="sub">Select an operation. Athena holds the ledger of every decision made here.</p>
+        </div>
+      </header>
+
+      <div className="home-grid">
+        <motion.nav className="modes" aria-label="Primary modes"
+          initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}>
+          {modes.map((m, i) => (
+            <motion.button
+              key={m.to}
+              type="button"
+              className="mode"
+              onClick={() => navigate(m.to)}
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.08 * i, duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+            >
+              <span className="mode-idx">{m.idx}</span>
+              <span>
+                <h2>{m.title}</h2>
+                <div className="desc">{m.desc}</div>
+              </span>
+              <span className="mode-meta">
+                <div className="m1">{m.meta1}</div>
+                <div className="m2">{m.meta2}</div>
+              </span>
+              <ArrowUpRight className="mode-arrow" size={19} aria-hidden="true" />
+            </motion.button>
+          ))}
+        </motion.nav>
+
+        <div className="panel" style={{ padding: "6px 0" }}>
+          <div style={{ padding: "14px 16px 6px" }}><div className="eyebrow">System</div></div>
+          <div className="syslist">
+            <div className="sysrow">
+              <span className="k">Backend API</span>
+              <span>
+                <span className={`dot ${apiState === "ok" ? "ok" : apiState === "down" ? "bad" : "wait"}`} aria-hidden="true" />
+                {apiState === "ok" ? "Operational" : apiState === "down" ? "Unreachable" : "Checking…"}
+              </span>
+            </div>
+            <div className="sysrow">
+              <span className="k">Endpoint</span>
+              <span className="mono">{new URL(API_BASE).host}</span>
+            </div>
+            <div className="sysrow">
+              <span className="k">Last sync</span>
+              <span className="mono">{syncedAt ? syncedAt.toLocaleTimeString("en-GB") : "—"}</span>
+            </div>
+            <div className="sysrow">
+              <span className="k">Session</span>
+              <span className="mono">{user?.username || "operative"}</span>
+            </div>
+          </div>
+          {apiState === "down" && (
+            <p style={{ padding: "10px 16px 14px", fontSize: 12, color: "var(--text-low)" }}>
+              Mode data will populate once the backend is reachable. Nothing is mocked in the meantime.
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+```
+
+### `src/screens/command/History.jsx`
+
+```jsx
+import { ChevronRight } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { api } from "../../lib/api";
+import { normalizeSummaries } from "../../lib/contract";
+import { dateShort, money, roas } from "../../lib/format";
+import { usePageTitle } from "../../lib/hooks";
+import { useAuth } from "../../state/AuthContext";
+import { EmptyState } from "../../components/ui";
+import { FileSearch, RefreshCw } from "lucide-react";
+
+export default function History() {
+  usePageTitle("Analysis History");
+  const { token } = useAuth();
+  const navigate = useNavigate();
+  const [state, setState] = useState("loading"); // loading | ready | error | empty
+  const [rows, setRows] = useState([]);
+  const [errMsg, setErrMsg] = useState("");
+
+  const load = () => {
+    setState("loading");
+    api.get("/analyses", token)
+      .then((d) => {
+        const list = normalizeSummaries(d);
+        setRows(list);
+        setState(list.length ? "ready" : "empty");
+      })
+      .catch((e) => { setErrMsg(e.message); setState("error"); });
+  };
+
+  useEffect(load, [token]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <div className="page">
+      <header className="page-head">
+        <div>
+          <div className="eyebrow">Mode 01</div>
+          <h1>Analysis History</h1>
+          <p className="sub">What did Athena recommend, and when. Select a record to open its full analysis.</p>
+        </div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button className="btn btn--ghost btn--sm" onClick={load} disabled={state === "loading"}>
+            <RefreshCw size={13} aria-hidden="true" /> Refresh
+          </button>
+          <Link to="/run" className="btn btn--sm">Run analysis</Link>
+        </div>
+      </header>
+
+      {state === "loading" && (
+        <div className="panel rowtable" style={{ padding: 18, display: "flex", flexDirection: "column", gap: 12 }}>
+          {[...Array(5)].map((_, i) => <div className="skel" key={i} style={{ height: 34 }} />)}
+        </div>
+      )}
+
+      {state === "error" && (
+        <div className="panel"><EmptyState icon={FileSearch} title="Could not load history" hint={errMsg}>
+          <button className="btn btn--ghost btn--sm" onClick={load}>Retry</button>
+        </EmptyState></div>
+      )}
+
+      {state === "empty" && (
+        <div className="panel"><EmptyState icon={FileSearch} title="No analyses yet"
+          hint="Once a scenario is submitted, every run is archived here with its prediction and recommendation.">
+          <Link to="/run" className="btn">Run your first analysis</Link>
+        </EmptyState></div>
+      )}
+
+      {state === "ready" && (
+        <div className="panel rowtable">
+          <div className="hhead" aria-hidden="true">
+            <span>Date</span><span className="hide-m">ID</span><span>Scenario</span>
+            <span className="hide-m">Key metric</span><span className="hide-m">Prediction</span>
+            <span>Recommendation</span><span>Status</span><span />
+          </div>
+          {rows.map((r) => (
+            <button
+              key={r.id}
+              className="hrow"
+              onClick={() => navigate(`/history/${encodeURIComponent(r.id)}`)}
+              aria-label={`Open analysis ${r.id}: ${r.scenario}`}
+            >
+              <span className="mono">{dateShort(r.createdAt)}</span>
+              <span className="mono c-id hide-m">{r.id}</span>
+              <span className="c-scen">{r.scenario}</span>
+              <span className="mono hide-m">{roas(r.roas)}</span>
+              <span className="mono hide-m">{money(r.predictedRevenue)}</span>
+              <span className="c-rec">{r.recommendation || "—"}</span>
+              <span><span className="pill" style={{ padding: "4px 9px" }}><i style={{ background: r.status === "failed" ? "var(--neg)" : r.status === "processing" ? "var(--gold-300)" : "var(--pos)" }} aria-hidden="true" />{r.status}</span></span>
+              <ChevronRight className="chev" size={15} aria-hidden="true" />
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+### `src/screens/command/AnalysisDetail.jsx`
+
+```jsx
+import { useEffect, useState } from "react";
+import { Link, useParams } from "react-router-dom";
+import { api, pollAnalysis } from "../../lib/api";
+import { normalizeResult } from "../../lib/contract";
+import { dateTime } from "../../lib/format";
+import { usePageTitle } from "../../lib/hooks";
+import { useAuth } from "../../state/AuthContext";
+import ResultReport, { Recommendation } from "../../components/ResultReport";
+import { EmptyState, Eyebrow, StatusPill } from "../../components/ui";
+import { ProcessingPanel } from "./RunAnalysis";
+
+export default function AnalysisDetail() {
+  const { id } = useParams();
+  usePageTitle(`Analysis ${id}`);
+  const { token } = useAuth();
+  const [state, setState] = useState("loading");
+  const [result, setResult] = useState(null);
+  const [errMsg, setErrMsg] = useState("");
+
+  useEffect(() => {
+    let live = true;
+    setState("loading");
+    api.get(`/analyses/${encodeURIComponent(id)}`, token)
+      .then((d) => {
+        if (!live) return;
+        const n = normalizeResult(d);
+        setResult(n);
+        const s = (n.status || "").toLowerCase();
+        if (["processing", "running", "pending", "queued"].includes(s)) {
+          setState("processing");
+          return pollAnalysis(id, token, { onUpdate: () => {} })
+            .then((final) => { if (live) { setResult(final); setState("ready"); } })
+            .catch((e) => { if (live) { setErrMsg(e.message); setState("error"); } });
+        }
+        setState("ready");
+      })
+      .catch((e) => { if (live) { setErrMsg(e.message); setState("error"); } });
+    return () => { live = false; };
+  }, [id, token]);
+
+  return (
+    <div className="page">
+      <Link to="/history" className="backlink">← Analysis History</Link>
+      <header className="page-head">
+        <div>
+          <div className="eyebrow">Analysis record</div>
+          <h1 style={{ fontFamily: "var(--font-mono)", fontWeight: 400, fontSize: 26 }}>{id}</h1>
+          {result && (
+            <p className="sub" style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              {dateTime(result.createdAt)} · <StatusPill status={result.status} />
+            </p>
+          )}
+        </div>
+        <Link to="/run" className="btn btn--ghost btn--sm">Run a new analysis</Link>
+      </header>
+
+      {state === "loading" && (
+        <div className="panel" style={{ padding: 18, display: "flex", flexDirection: "column", gap: 12 }}>
+          {[...Array(4)].map((_, i) => <div className="skel" key={i} style={{ height: 60 }} />)}
+        </div>
+      )}
+
+      {state === "processing" && (
+        <div className="panel" style={{ padding: 26 }}>
+          <Eyebrow>Live analysis</Eyebrow>
+          <ProcessingPanel active />
+        </div>
+      )}
+
+      {state === "error" && (
+        <div className="panel"><EmptyState title="Analysis unavailable" hint={errMsg} /></div>
+      )}
+
+      {state === "ready" && result && (
+        result.status === "failed" ? (
+          <div className="panel"><EmptyState title="This analysis failed on the backend"
+            hint="The backend marked this run as failed. Re-run the scenario to generate a fresh analysis." />
+          </div>
+        ) : (
+          <>
+            {result.recommendation?.action || result.recommendation?.headline ? (
+              <div style={{ marginBottom: 22 }}><Recommendation rec={result.recommendation} /></div>
+            ) : null}
+            <ResultReport result={result} />
+          </>
+        )
+      )}
+    </div>
+  );
+}
+```
+
+### `src/screens/command/RunAnalysis.jsx`
+
+```jsx
+import { AnimatePresence, motion } from "framer-motion";
+import { Check, Play } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Link, useLocation } from "react-router-dom";
+import { api, pollAnalysis } from "../../lib/api";
+import { normalizeResult } from "../../lib/contract";
+import { useElapsed, usePageTitle } from "../../lib/hooks";
+import { useAuth } from "../../state/AuthContext";
+import { Banner, EmptyState, Eyebrow, Field, StatusPill } from "../../components/ui";
+import ResultReport from "../../components/ResultReport";
+import { dateTime } from "../../lib/format";
+
+const HORIZONS = [7, 14, 30, 60, 90];
+
+/* Presentational processing steps — UI states only, never data claims. */
+const STEPS = [
+  "Scenario accepted",
+  "Reconciling inventory",
+  "Simulating demand",
+  "Optimizing spend",
+  "Compiling recommendation",
+];
+const STEP_AT = [0.2, 1.4, 3.2, 5.6, 8.2]; // seconds
+
+export function ProcessingPanel({ active, failed }) {
+  const ms = useElapsed(active);
+  const s = ms / 1000;
+  const doneCount = failed ? 0 : STEPS.filter((_, i) => s >= STEP_AT[i] + 1.4).length;
+  const currentIdx = failed ? -1 : STEPS.findIndex((_, i) => s >= STEP_AT[i] && s < STEP_AT[i] + 1.4);
+  const progress = Math.min(92, (s / 45) * 100);
+  return (
+    <div>
+      <div className="proc-top" aria-live="polite">
+        <span className="dot wait" aria-hidden="true" />
+        {failed ? "Run failed." : "Athena is processing the scenario…"}
+        <span className="mono" style={{ marginLeft: "auto" }}>
+          elapsed {String(Math.floor(s / 60)).padStart(2, "0")}:{String(Math.floor(s % 60)).padStart(2, "0")}
+        </span>
+      </div>
+      <div className="steps">
+        {STEPS.map((label, i) => {
+          const done = i < doneCount;
+          const on = i === doneCount || i === currentIdx;
+          return (
+            <div key={label} className={`step${done ? " done" : on ? " on" : ""}`}>
+              <span className="s-ic" aria-hidden="true">
+                {done ? <Check size={11} /> : on ? <span className="dot wait" style={{ margin: 0 }} /> : null}
+              </span>
+              {label}
+            </div>
+          );
+        })}
+      </div>
+      <div className="pulsebar" aria-hidden="true"><span style={{ width: `${progress}%` }} /></div>
+    </div>
+  );
+}
+
+export default function RunAnalysis() {
+  usePageTitle("Run Analysis");
+  const { token } = useAuth();
+  const prefill = useLocation().state?.prefill || {};
+
+  const [stage, setStage] = useState("form"); // form | processing | result | error
+  const [result, setResult] = useState(null);
+  const [runError, setRunError] = useState("");
+  const [formError, setFormError] = useState("");
+  const [errors, setErrors] = useState({});
+  const [form, setForm] = useState({
+    sku: prefill.sku ?? "",
+    product: prefill.product ?? "",
+    current_inventory: prefill.current_inventory ?? "",
+    planned_inventory: prefill.planned_inventory ?? "",
+    selling_price: prefill.selling_price ?? "",
+    unit_cost: prefill.unit_cost ?? "",
+    expected_demand: prefill.expected_demand ?? "",
+    campaign: prefill.campaign ?? "",
+    spend: prefill.spend ?? "",
+    horizon_days: prefill.horizon_days ?? 30,
+    assumptions: prefill.assumptions ?? "",
+  });
+
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+  const numField = (v) => (v === "" ? undefined : Number(v));
+
+  async function submit(e) {
+    e.preventDefault();
+    setFormError("");
+    const er = {};
+    if (!form.sku.trim()) er.sku = "SKU is required.";
+    if (!form.product.trim()) er.product = "Product is required.";
+    if (form.current_inventory === "" || Number(form.current_inventory) < 0) er.current_inventory = "Required, 0 or more.";
+    if (form.selling_price === "" || Number(form.selling_price) <= 0) er.selling_price = "Required, greater than 0.";
+    if (form.expected_demand === "" || Number(form.expected_demand) < 0) er.expected_demand = "Required, 0 or more.";
+    if (form.spend !== "" && Number(form.spend) < 0) er.spend = "Cannot be negative.";
+    setErrors(er);
+    if (Object.keys(er).length) return;
+
+    setStage("processing");
+    setRunError("");
+    const payload = {
+      sku: form.sku.trim(),
+      product: form.product.trim(),
+      current_inventory: numField(form.current_inventory),
+      planned_inventory: numField(form.planned_inventory),
+      selling_price: numField(form.selling_price),
+      unit_cost: numField(form.unit_cost),
+      expected_demand: numField(form.expected_demand),
+      campaign: form.campaign.trim() || undefined,
+      spend: numField(form.spend),
+      horizon_days: Number(form.horizon_days) || undefined,
+      assumptions: form.assumptions.trim() || undefined,
+    };
+
+    try {
+      const d = await api.post("/analyses", payload, token);
+      const n = normalizeResult(d);
+      const s = (n?.status || "").toLowerCase();
+      if (n && ["complete", "completed"].includes(s)) {
+        setResult(n);
+        setStage("result");
+      } else if (n?.id && n.id !== "—") {
+        const final = await pollAnalysis(n.id, token, {});
+        if ((final?.status || "").toLowerCase() === "failed") throw new Error("The backend reported this analysis as failed.");
+        setResult(final);
+        setStage("result");
+      } else {
+        throw new Error("The backend accepted the scenario but returned no analysis id.");
+      }
+    } catch (err) {
+      setRunError(err.message || "Analysis failed.");
+      setStage("error");
+    }
+  }
+
+  return (
+    <div className="page">
+      {stage === "result" && result && (
+        <Link to={`/history/${encodeURIComponent(result.id)}`} className="backlink" style={{ visibility: "hidden" }} aria-hidden="true">.</Link>
+      )}
+      <header className="page-head">
+        <div>
+          <div className="eyebrow">Mode 02</div>
+          <h1>{stage === "result" ? "Analysis result" : "Run Analysis"}</h1>
+          <p className="sub">
+            {stage === "result" && result
+              ? <>Run {result.id} · {dateTime(result.createdAt)} · <StatusPill status={result.status} /></>
+              : "Describe the business scenario. Athena returns the projection, the risk, and a directive."}
+          </p>
+        </div>
+        {stage === "result" && (
+          <div style={{ display: "flex", gap: 10 }}>
+            <Link to={`/history/${encodeURIComponent(result.id)}`} className="btn btn--ghost btn--sm">Open in history</Link>
+            <button className="btn btn--sm" onClick={() => { setStage("form"); setResult(null); }}>Run another</button>
+          </div>
+        )}
+      </header>
+
+      <AnimatePresence mode="wait">
+        {stage === "form" && (
+          <motion.form
+            key="form"
+            onSubmit={submit}
+            noValidate
+            initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+            style={{ display: "flex", flexDirection: "column", gap: 20, maxWidth: 860 }}
+          >
+            {formError && <Banner>{formError}</Banner>}
+
+            <fieldset className="panel" style={{ padding: "22px 24px", border: "1px solid var(--line)" }}>
+              <legend className="eyebrow" style={{ padding: 0 }}>Scenario</legend>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1.4fr", gap: 16, marginTop: 8 }}>
+                <Field id="sku" label="SKU" value={form.sku} onChange={set("sku")} required error={errors.sku} placeholder="CMP005" />
+                <Field id="product" label="Product" value={form.product} onChange={set("product")} required error={errors.product} placeholder="Wireless door sensor" />
+                <Field id="demand" label="Expected demand" type="number" min="0" value={form.expected_demand} onChange={set("expected_demand")} required error={errors.expected_demand} hint="Units over the horizon." placeholder="1200" />
+                <Field id="horizon" label="Time horizon" value={form.horizon_days} onChange={set("horizon_days")} hint="Days ahead to project.">
+                  <select id="horizon" className="input" value={form.horizon_days} onChange={set("horizon_days")}>
+                    {HORIZONS.map((h) => <option key={h} value={h}>{h} days</option>)}
+                  </select>
+                </Field>
+              </div>
+            </fieldset>
+
+            <fieldset className="panel" style={{ padding: "22px 24px", border: "1px solid var(--line)" }}>
+              <legend className="eyebrow" style={{ padding: 0 }}>Inventory</legend>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 8 }}>
+                <Field id="curinv" label="Current inventory" type="number" min="0" value={form.current_inventory} onChange={set("current_inventory")} required error={errors.current_inventory} placeholder="340" />
+                <Field id="planinv" label="Planned inventory" type="number" min="0" value={form.planned_inventory} onChange={set("planned_inventory")} optional hint="Inbound units planned for the horizon." placeholder="500" />
+              </div>
+            </fieldset>
+
+            <fieldset className="panel" style={{ padding: "22px 24px", border: "1px solid var(--line)" }}>
+              <legend className="eyebrow" style={{ padding: 0 }}>Economics</legend>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 8 }}>
+                <Field id="price" label="Selling price" type="number" min="0" step="0.01" value={form.selling_price} onChange={set("selling_price")} required error={errors.selling_price} placeholder="2499" />
+                <Field id="cost" label="Unit cost" type="number" min="0" step="0.01" value={form.unit_cost} onChange={set("unit_cost")} optional hint="Enables margin in the result." placeholder="1420" />
+              </div>
+            </fieldset>
+
+            <fieldset className="panel" style={{ padding: "22px 24px", border: "1px solid var(--line)" }}>
+              <legend className="eyebrow" style={{ padding: 0 }}>Campaign</legend>
+              <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr", gap: 16, marginTop: 8 }}>
+                <Field id="campaign" label="Campaign" value={form.campaign} onChange={set("campaign")} optional placeholder="Diwali push — Meta" />
+                <Field id="spend" label="Planned spend" type="number" min="0" step="0.01" value={form.spend} onChange={set("spend")} optional error={errors.spend} placeholder="60000" />
+              </div>
+            </fieldset>
+
+            <Field id="assumptions" label="Assumptions" optional hint="Free-text context Athena should respect (price drops, seasonality, supply delays).">
+              <textarea id="assumptions" className="input" rows={3} value={form.assumptions} onChange={set("assumptions")} placeholder="Competitor launch expected mid-horizon; supply is stable." />
+            </Field>
+
+            <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+              <button className="btn" type="submit">
+                <Play size={14} aria-hidden="true" /> Run analysis
+              </button>
+              <span className="mono">POST /analyses</span>
+            </div>
+          </motion.form>
+        )}
+
+        {stage === "processing" && (
+          <motion.div key="proc" className="panel" style={{ padding: 28, maxWidth: 640 }}
+            initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.3 }}>
+            <Eyebrow>Processing</Eyebrow>
+            <div style={{ height: 16 }} />
+            <ProcessingPanel active />
+          </motion.div>
+        )}
+
+        {stage === "error" && (
+          <motion.div key="err" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }} style={{ maxWidth: 640 }}>
+            <div className="panel">
+              <EmptyState title="Analysis could not complete" hint={runError}>
+                <button className="btn" onClick={() => setStage("form")}>Back to scenario</button>
+              </EmptyState>
+            </div>
+          </motion.div>
+        )}
+
+        {stage === "result" && result && (
+          <motion.div key="res" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}>
+            <ResultReport result={result} />
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+```
+
+### `src/screens/command/DataReferences.jsx`
+
+```jsx
+import { ChevronRight, Database } from "lucide-react";
+import { useEffect, useState } from "react";
+import { api } from "../../lib/api";
+import { usePageTitle } from "../../lib/hooks";
+import { useAuth } from "../../state/AuthContext";
+import { DECLARED_SOURCES } from "../../data/provenance";
+
+export default function DataReferences() {
+  usePageTitle("Data References");
+  const { token } = useAuth();
+  const [sources, setSources] = useState(null); // null = still checking
+  const [live, setLive] = useState(false);
+
+  useEffect(() => {
+    let liveReq = true;
+    const ctrl = new AbortController();
+    const timeout = setTimeout(() => ctrl.abort(), 4000);
+    api.get("/references", token, ctrl.signal)
+      .then((d) => {
+        if (!liveReq) return;
+        const list = Array.isArray(d) ? d : d?.sources;
+        if (Array.isArray(list) && list.length) { setSources(list); setLive(true); }
+        else setSources(DECLARED_SOURCES);
+      })
+      .catch(() => liveReq && setSources(DECLARED_SOURCES))
+      .finally(() => clearTimeout(timeout));
+    return () => { liveReq = false; ctrl.abort(); };
+  }, [token]);
+
+  return (
+    <div className="page">
+      <header className="page-head">
+        <div>
+          <div className="eyebrow">Mode 03</div>
+          <h1>Data References</h1>
+          <p className="sub">
+            Provenance for every field Athena consumes. If a number cannot be traced to a source
+            listed here, it does not belong in an analysis.
+          </p>
+        </div>
+        <span className="badge">{sources === null ? "Checking…" : live ? "Live catalog" : "Declared contract"}</span>
+      </header>
+
+      {sources === null ? (
+        <div className="panel" style={{ padding: 18, display: "flex", flexDirection: "column", gap: 12 }}>
+          {[...Array(4)].map((_, i) => <div className="skel" key={i} style={{ height: 52 }} />)}
+        </div>
+      ) : (
+        <div className="prov-list">
+          {sources.map((s, i) => (
+            <details className="prov panel" key={i} open={i === 0}>
+              <summary>
+                <span className="p-src">{s.source}</span>
+                <span className="p-tbl mono">{s.table}</span>
+                <ChevronRight className="p-chev" size={15} aria-hidden="true" />
+              </summary>
+              <div className="prov-body">
+                {Array.isArray(s.fields) && s.fields.length > 0 && (
+                  <div className="fld-chips" aria-label="Fields">
+                    {s.fields.map((f) => <span key={f}>{f}</span>)}
+                  </div>
+                )}
+                <div className="prov-cols">
+                  <div className="def"><div className="dt">Purpose</div><div className="dd">{s.purpose || "—"}</div></div>
+                  <div className="def"><div className="dt">Transformation</div><div className="dd">{s.transformation || "—"}</div></div>
+                  <div className="def"><div className="dt">Why Athena uses it</div><div className="dd">{s.why || s.why_used || "—"}</div></div>
+                  <div className="def"><div className="dt">Time range</div><div className="dd">{s.range || s.time_range || "—"}</div></div>
+                  <div className="def" style={{ gridColumn: "1 / -1" }}>
+                    <div className="dt">Limitations</div><div className="dd">{s.limitations || "—"}</div>
+                  </div>
+                </div>
+              </div>
+            </details>
+          ))}
+        </div>
+      )}
+
+      {!live && sources && (
+        <p style={{ marginTop: 18, fontSize: 12.5, color: "var(--text-low)", display: "flex", gap: 8, alignItems: "center" }}>
+          <Database size={13} aria-hidden="true" />
+          Showing the declared data contract. When the backend exposes <code className="mono">GET /references</code>, the live catalog replaces this automatically.
+        </p>
+      )}
+    </div>
+  );
+}
+```
+
+### `src/data/provenance.js`
+
+```js
+/* Declared data contract for Mode 03. This is pipeline documentation,
+   not analysis data. If the backend serves GET /references, the live
+   catalog overrides everything here. */
+export const DECLARED_SOURCES = [
+  {
+    source: "Operations warehouse (PostgreSQL)",
+    table: "inventory_snapshots",
+    fields: ["sku", "on_hand_units", "reserved_units", "snapshot_date"],
+    purpose: "Current and historical stock position per SKU.",
+    transformation: "Daily snapshots deduplicated on (sku, snapshot_date); reserved units excluded from available stock.",
+    why: "Anchors the inventory trajectory and stockout-risk calculation.",
+    range: "Trailing 180 days",
+    limitations: "Snapshot cadence is daily — intraday stock movements are not visible.",
+  },
+  {
+    source: "Ad platforms (daily export)",
+    table: "ad_spend_daily",
+    fields: ["channel", "campaign_id", "spend", "impressions", "clicks", "date"],
+    purpose: "Paid media spend and delivery by channel and campaign.",
+    transformation: "Currency normalized to the reporting currency; cancelled campaigns excluded.",
+    why: "Baseline for ROAS and spend-optimization recommendations.",
+    range: "Trailing 90 days",
+    limitations: "Attribution windows differ per platform; cross-channel ROAS is approximate.",
+  },
+  {
+    source: "Sales ledger",
+    table: "orders",
+    fields: ["order_id", "sku", "units", "unit_price", "order_date"],
+    purpose: "Realized demand and revenue.",
+    transformation: "Refunds netted out; internal test orders excluded.",
+    why: "Demand baseline against which projections are compared.",
+    range: "Trailing 365 days",
+    limitations: "Pending (not yet shipped) orders are not included.",
+  },
+  {
+    source: "Campaign metadata",
+    table: "campaigns",
+    fields: ["campaign_id", "name", "status", "start_date", "end_date"],
+    purpose: "Campaign context used to attribute spend and demand.",
+    transformation: "Joined to ad_spend_daily on campaign_id.",
+    why: "Separates paid demand from organic demand in projections.",
+    range: "Active plus trailing 90 days",
+    limitations: "Campaign naming conventions vary across teams.",
+  },
+];
+```
+
+### `src/App.jsx`
+
+```jsx
+import { useMemo, useState } from "react";
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { AuthProvider, useAuth } from "./state/AuthContext";
+import IntroSequence from "./screens/IntroSequence";
+import Auth from "./screens/Auth";
+import CommandShell from "./screens/command/CommandShell";
+import Home from "./screens/command/Home";
+import History from "./screens/command/History";
+import AnalysisDetail from "./screens/command/AnalysisDetail";
+import RunAnalysis from "./screens/command/RunAnalysis";
+import DataReferences from "./screens/command/DataReferences";
+
+function RequireAuth({ children }) {
+  const { token } = useAuth();
+  const location = useLocation();
+  if (!token) return <Navigate to="/auth" replace state={{ from: location }} />;
+  return children;
+}
+
+function AppRoutes() {
+  return (
+    <Routes>
+      <Route path="/auth" element={<Auth />} />
+      <Route element={<RequireAuth><CommandShell /></RequireAuth>}>
+        <Route index element={<Home />} />
+        <Route path="history" element={<History />} />
+        <Route path="history/:id" element={<AnalysisDetail />} />
+        <Route path="run" element={<RunAnalysis />} />
+        <Route path="references" element={<DataReferences />} />
+      </Route>
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
+}
+
+export default function App() {
+  const skip = useMemo(
+    () => new URLSearchParams(window.location.search).get("intro") === "0",
+    []
+  );
+  const [introDone, setIntroDone] = useState(skip);
+
+  return (
+    <AuthProvider>
+      {!introDone && <IntroSequence onDone={() => setIntroDone(true)} />}
+      <BrowserRouter>
+        <AppRoutes />
+      </BrowserRouter>
+    </AuthProvider>
+  );
+}
+```
+
+### `src/main.jsx`
+
+```jsx
+import React from "react";
+import ReactDOM from "react-dom/client";
+import App from "./App";
+import "./styles/global.css";
+
+ReactDOM.createRoot(document.getElementById("root")).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);
+```
+
+### `README.md`
+
+```markdown
+# ATHENA — Executive Intelligence (Frontend)
+
+Dark, executive, champagne-gold-on-ink. Brand derived from the foil emblem;
+opening sequence plays the supplied brand video (`public/intro.mp4`, auto-detected)
+with a motion-built fallback in the same visual grammar.
+
+## Run
+
+    npm install
+    npm run dev          # http://localhost:5173
+
+Copy `.env.example` → `.env` and point it at the backend.
+
+## Environment variables
+
+| Variable              | Default                 | Purpose                        |
+|-----------------------|-------------------------|--------------------------------|
+| `VITE_API_BASE_URL`   | `http://localhost:8000` | Athena backend base URL        |
+| `VITE_CURRENCY`       | `₹`                     | Currency symbol for monetary values |
+
+## API contract (expected by the frontend)
+
+Auth (POST, JSON):
+- `POST /auth/login`    `{ username, password }` → `{ token, user: { username } }`
+- `POST /auth/register` `{ username, password }` → `{ token, user: { username } }`
+
+Analyses (Bearer token):
+- `GET  /analyses`        → array (or `{ analyses: [...] }`) of summaries:
+  `{ id, created_at, status, sku?, product?, kpis?: { roas, predicted_revenue }, recommendation?: { headline | action } }`
+- `POST /analyses`        → either the full result or `{ id, status: "processing" }` (then polled)
+- `GET  /analyses/:id`    → full result (see `src/lib/contract.js` for the exact shape)
+- `GET  /references` (optional) → array of provenance entries; falls back to the declared contract
+
+## Integration notes
+
+- **All field-name expectations live in `src/lib/contract.js`.** If the backend
+  names things differently, change them there — no component edits required.
+- **Nothing is fabricated.** Missing fields render `—`; missing chart series
+  render empty states; empty history renders an empty state. Polling runs while
+  the backend reports `status: "processing"`.
+- Swap the inline emblem in `src/components/AthenaMark.jsx` for the supplied
+  logo asset if preferred.
+- Append `?intro=0` to the URL to skip the opening sequence; users with
+  `prefers-reduced-motion` skip automatically.
+
+## Demo flow
+
+Intro → login (`?intro=0` to skip) → Command (three modes) →
+Run Analysis (fill scenario → processing → KPIs, recommendation, charts) →
+History (open a record) → Data References (audit trail).
+```
+
+---
+
+## What each requirement maps to
+
+- **Opening**: `IntroSequence` — plays `public/intro.mp4` (your supplied video, dropped into `public/`), then a split-curtain reveal into auth; fallback intro mirrors the video's grammar (ink canvas, progress frame, counting percentage, 14→100 style).
+- **Login/Signup**: real `POST /auth/login` / `POST /auth/register`, validation, rotating attributed BI quotes (change on refresh + every 9s), token from the server (not localStorage-only auth).
+- **Three modes**: full-width editorial rows on the Command home — 01 History, 02 Run Analysis, 03 Data References — plus an honest System rail.
+- **Run Analysis**: sectioned form → processing panel (presentational steps + elapsed timer + polling) → result: KPI band, **ATHENA RECOMMENDS** block with reason/evidence/confidence and "inspect supporting data," and five charts, each captioned with the business question it answers. Every chart only renders if the backend returned that series.
+- **History / Detail**: dated records with ID, scenario, metric, prediction, recommendation, status; detail view shares the same report renderer and polls while `status: processing`.
+- **Data References**: provenance accordions (Source, Table, Fields, Purpose, Transformation, Why, Range, Limitations) from `GET /references` if available, otherwise the declared contract — clearly badged either way.
+
+Run it with `npm install && npm run dev`, drop your video into `public/intro.mp4`, and point `VITE_API_BASE_URL` at the backend.
