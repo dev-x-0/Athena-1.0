@@ -173,3 +173,9 @@ export default function Auth() {
     </div>
   );
 }
+// Replace your fetch/axios call inside your handleSubmit function with this mock:
+const handleSubmit = async (e) => {
+  e.preventDefault();
+  // Bypasses backend during live presentation
+  onLogin({ username: "test1" }); 
+};
