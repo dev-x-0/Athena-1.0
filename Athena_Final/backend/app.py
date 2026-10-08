@@ -553,3 +553,14 @@ def spa_fallback(full_path: str):
     if index.exists():
         return FileResponse(index)
     raise HTTPException(404, "Frontend has not been built yet")
+
+
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
