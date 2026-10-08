@@ -15,7 +15,7 @@ Copy `.env.example` → `.env` and point it at the backend.
 
 | Variable              | Default                 | Purpose                        |
 |-----------------------|-------------------------|--------------------------------|
-| `VITE_API_BASE_URL`   | `http://localhost:8000` | Athena backend base URL        |
+| `VITE_API_BASE_URL`   | `https://athena-1-0.onrender.com` | Athena backend base URL        |
 | `VITE_CURRENCY`       | `₹`                     | Currency symbol for monetary values |
 
 ## API contract (expected by the frontend)

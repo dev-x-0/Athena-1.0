@@ -124,7 +124,7 @@ export default defineConfig({
 
 ```bash
 # Base URL of the Athena backend (no trailing slash)
-VITE_API_BASE_URL=http://localhost:8000
+VITE_API_BASE_URL=https://athena-1-0.onrender.com
 
 # Currency symbol shown on monetary values
 VITE_CURRENCY=₹
@@ -828,7 +828,7 @@ function mapSeries(arr, keyAliases, valAliases) {
 ```js
 import { normalizeResult } from "./contract";
 
-export const API_BASE = (import.meta.env.VITE_API_BASE_URL || "http://localhost:8000").replace(/\/+$/, "");
+export const API_BASE = (import.meta.env.VITE_API_BASE_URL || "https://athena-1-0.onrender.com").replace(/\/+$/, "");
 
 export class ApiError extends Error {
   constructor(status, message) {
@@ -2725,7 +2725,7 @@ Copy `.env.example` → `.env` and point it at the backend.
 
 | Variable              | Default                 | Purpose                        |
 |-----------------------|-------------------------|--------------------------------|
-| `VITE_API_BASE_URL`   | `http://localhost:8000` | Athena backend base URL        |
+| `VITE_API_BASE_URL`   | `https://athena-1-0.onrender.com` | Athena backend base URL        |
 | `VITE_CURRENCY`       | `₹`                     | Currency symbol for monetary values |
 
 ## API contract (expected by the frontend)

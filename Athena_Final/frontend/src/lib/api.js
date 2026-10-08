@@ -1,6 +1,6 @@
 import { normalizeResult } from "./contract";
 
-export const API_BASE = (import.meta.env.VITE_API_BASE_URL || "http://localhost:8000").replace(/\/+$/, "");
+export const API_BASE = (import.meta.env.VITE_API_BASE_URL || "https://athena-1-0.onrender.com").replace(/\/+$/, "");
 
 export class ApiError extends Error {
   constructor(status, message) {
