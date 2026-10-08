@@ -5,7 +5,24 @@ import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { Brandline } from "../components/AthenaMark";
 import { Banner, Field } from "../components/ui";
 import { nextQuote, QUOTES, randomQuote } from "../lib/quotes";
-import { useAuth } from "../state/AuthContext";
+const API_URL = import.meta.env.VITE_API_URL || "https://athena-1-0.onrender.com";
+
+async function register(username, password) {
+  const res = await fetch(`${API_URL}/register`, { // Check if your backend route is /register, /signup, or /auth/register
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.message || `Request failed (${res.status})`);
+  }
+
+  const data = await res.json();
+  // Set your auth state / token here
+  return data;
+}
 import { usePageTitle } from "../lib/hooks";
 import AthenaMark from '../components/AthenaMark';
 
@@ -173,9 +190,4 @@ export default function Auth() {
     </div>
   );
 }
-// Replace your fetch/axios call inside your handleSubmit function with this mock:
-const handleSubmit = async (e) => {
-  e.preventDefault();
-  // Bypasses backend during live presentation
-  onLogin({ username: "test1" }); 
-};
+
