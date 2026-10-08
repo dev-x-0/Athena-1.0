@@ -21,7 +21,7 @@ export default function Auth() {
   const [apiError, setApiError] = useState("");
   const [busy, setBusy] = useState(false);
   const [granted, setGranted] = useState(false);
-  
+
   const [qi, setQi] = useState(() => {
     const initial = QUOTES ? QUOTES.indexOf(randomQuote()) : 0;
     return initial >= 0 ? initial : 0;
@@ -50,25 +50,23 @@ export default function Auth() {
     const e = validate();
     setErrors(e);
     if (Object.keys(e).length) return;
+
     setBusy(true);
 
     try {
-      if (mode === "login") {
-        if (login) await login(username.trim(), password);
+      if (mode === "signup") {
+        await register(username, password, username);
       } else {
-        if (register) await register(username.trim(), password);
+        await login(username, password);
       }
       setGranted(true);
-      setTimeout(() => navigate(location.state?.from?.pathname || "/", { replace: true }), 550);
+      setTimeout(() => {
+        navigate(location.state?.from?.pathname || "/");
+      }, 500);
     } catch (err) {
-      // Fallback bypass if backend returns 404 during live demo
-      if (err.message && (err.message.includes("404") || err.message.includes("failed"))) {
-        setGranted(true);
-        setTimeout(() => navigate(location.state?.from?.pathname || "/", { replace: true }), 550);
-      } else {
-        setApiError(err.message || "Authentication failed.");
-        setBusy(false);
-      }
+      setApiError(err.message || "Authentication failed. Please check your credentials.");
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -118,7 +116,7 @@ export default function Auth() {
               </p>
             </div>
 
-            {apiError && <Banner>{apiError}</Banner>}
+            {apiError && <Banner tone="critical">{apiError}</Banner>}
             {granted && (
               <Banner tone="ok">
                 <Check size={15} aria-hidden="true" /> Access granted. Entering Athena…

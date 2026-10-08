@@ -27,9 +27,17 @@ app = FastAPI(
     description="Executive intelligence for inventory, advertising spend and scenario decisions.",
     version="2.0.0",
 )
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:8000", "http://127.0.0.1:8000"],
+    allow_origins=[
+        "https://athena-1-0.vercel.app",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+        "*",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -235,7 +243,6 @@ def build_analysis(payload: dict[str, Any]) -> dict[str, Any]:
     spend_delta = spend - baseline_daily_spend
 
     baseline_revenue = max(0.0, historical_roas * baseline_daily_spend) if historical_roas else 0.0
-    # Transparent diminishing-return scenario model. beta is intentionally conservative.
     beta = 0.70
     if baseline_daily_spend > 0 and spend > 0:
         alpha = baseline_revenue / (baseline_daily_spend ** beta)
@@ -336,55 +343,79 @@ def baseline_spend_confidence(v: float) -> bool:
     return v > 0
 
 
-# ---------- auth ----------
-class Credentials(BaseModel):
-    username: str = Field(min_length=3, max_length=80)
-    password: str = Field(min_length=6, max_length=200)
+# ---------- flexible auth endpoints ----------
+
+class FlexAuthPayload(BaseModel):
+    username: Optional[str] = None
+    email: Optional[str] = None
+    password: str
 
 
+@app.post("/register")
+@app.post("/signup")
 @app.post("/auth/register")
-def register(body: Credentials):
-    username = body.username.strip()
-    if len(username) < 3:
-        raise HTTPException(400, "Username must be at least 3 characters")
+@app.post("/auth/signup")
+@app.post("/api/register")
+@app.post("/api/signup")
+@app.post("/api/auth/register")
+@app.post("/api/auth/signup")
+def register_user(body: FlexAuthPayload):
+    identifier = (body.username or body.email or "").strip()
+    if len(identifier) < 3:
+        raise HTTPException(400, "Username or email must be at least 3 characters")
+    
     password_hash, salt = hash_password(body.password)
     try:
         with conn() as c:
-            cur = c.execute("INSERT INTO users(username,password_hash,salt,created_at) VALUES (?,?,?,?)", (username, password_hash, salt, now_iso()))
+            cur = c.execute(
+                "INSERT INTO users(username,password_hash,salt,created_at) VALUES (?,?,?,?)",
+                (identifier, password_hash, salt, now_iso()),
+            )
             user_id = cur.lastrowid
     except sqlite3.IntegrityError:
-        raise HTTPException(409, "Username already exists")
+        raise HTTPException(409, "User already exists")
+    
     token = create_session(user_id)
-    return {"token": token, "user": {"username": username}}
+    return {"token": token, "user": {"username": identifier, "email": body.email or identifier}}
 
 
+@app.post("/login")
 @app.post("/auth/login")
-def login(body: Credentials):
+@app.post("/api/login")
+@app.post("/api/auth/login")
+def login_user(body: FlexAuthPayload):
+    identifier = (body.username or body.email or "").strip()
     with conn() as c:
-        user = c.execute("SELECT * FROM users WHERE username=?", (body.username.strip(),)).fetchone()
+        user = c.execute("SELECT * FROM users WHERE username=?", (identifier,)).fetchone()
+    
     if not user or not verify_password(body.password, user["password_hash"], user["salt"]):
-        raise HTTPException(401, "Invalid username or password")
-    return {"token": create_session(user["id"]), "user": {"username": user["username"]}}
+        raise HTTPException(401, "Invalid username/email or password")
+    
+    token = create_session(user["id"])
+    return {"token": token, "user": {"username": user["username"]}}
 
 
 @app.post("/auth/logout")
+@app.post("/api/auth/logout")
 def logout(authorization: Optional[str] = Header(default=None)):
     if authorization and authorization.lower().startswith("bearer "):
         with conn() as c:
-            c.execute("DELETE FROM sessions WHERE token=?", (authorization.split(" ",1)[1].strip(),))
+            c.execute("DELETE FROM sessions WHERE token=?", (authorization.split(" ", 1)[1].strip(),))
     return {"ok": True}
 
 
 @app.get("/auth/me")
+@app.get("/api/auth/me")
 def me(user=Depends(current_user)):
     return {"username": user["username"]}
 
 
 # ---------- dashboard/reference endpoints ----------
+
 @app.get("/api/health")
 @app.get("/health")
 def health():
-    return {"status": "healthy", "engine": "Athena", "data_source": "SQLite SQL demo + optional MySQL bridge"}
+    return {"status": "healthy", "engine": "Athena", "data_source": "SQLite SQL demo"}
 
 
 @app.get("/api/dashboard")
@@ -397,16 +428,16 @@ def dashboard(user=Depends(current_user)):
     findings = []
     for c in campaigns:
         if c["action"] == "PAUSE":
-            findings.append({"type":"critical","title":f"{c['name']} needs attention","what_happened":f"ROAS is {c['roas']:.2f}.","why_it_matters":"The campaign is below Athena's severe-efficiency guardrail.","campaign":c["campaign_id"],"recommendation":"Pause or investigate before adding spend."})
-        elif c["action"] in {"REDUCE","HOLD"}:
-            findings.append({"type":"warning","title":f"{c['name']} is below scale threshold","what_happened":f"ROAS is {c['roas']:.2f}.","why_it_matters":"Efficiency does not currently justify aggressive scaling.","campaign":c["campaign_id"],"recommendation":"Review spend and campaign conditions."})
+            findings.append({"type": "critical", "title": f"{c['name']} needs attention", "what_happened": f"ROAS is {c['roas']:.2f}.", "why_it_matters": "The campaign is below Athena's severe-efficiency guardrail.", "campaign": c["campaign_id"], "recommendation": "Pause or investigate before adding spend."})
+        elif c["action"] in {"REDUCE", "HOLD"}:
+            findings.append({"type": "warning", "title": f"{c['name']} is below scale threshold", "what_happened": f"ROAS is {c['roas']:.2f}.", "why_it_matters": "Efficiency does not currently justify aggressive scaling.", "campaign": c["campaign_id"], "recommendation": "Review spend and campaign conditions."})
     for i in inv:
         if i["stock_level"] <= 30:
-            findings.append({"type":"critical","title":f"{i['sku_id']}: low inventory","what_happened":f"Only {i['stock_level']} units remain.","why_it_matters":"Scaling demand against constrained stock can increase stockout risk.","campaign":i.get("campaign_id"),"recommendation":"Protect inventory before scaling acquisition."})
+            findings.append({"type": "critical", "title": f"{i['sku_id']}: low inventory", "what_happened": f"Only {i['stock_level']} units remain.", "why_it_matters": "Scaling demand against constrained stock can increase stockout risk.", "campaign": i.get("campaign_id"), "recommendation": "Protect inventory before scaling acquisition."})
     return {
-        "summary": {"ad_spend": round(spend,2), "revenue": round(revenue,2), "roas": round(revenue/spend,4) if spend else 0, "contribution": round(contribution,2), "campaign_count": len(campaigns)},
+        "summary": {"ad_spend": round(spend, 2), "revenue": round(revenue, 2), "roas": round(revenue / spend, 4) if spend else 0, "contribution": round(contribution, 2), "campaign_count": len(campaigns)},
         "campaigns": campaigns,
-        "products": [{"sku":i["sku_id"],"product":i["product_name"],"margin":i["net_margin"],"stock":i["stock_level"],"status":i["status"],"campaign_id":i["campaign_id"]} for i in inv],
+        "products": [{"sku": i["sku_id"], "product": i["product_name"], "margin": i["net_margin"], "stock": i["stock_level"], "status": i["status"], "campaign_id": i["campaign_id"]} for i in inv],
         "findings": findings,
         "trend": trend_data(),
         "forecast": forecast_7d(),
@@ -416,7 +447,7 @@ def dashboard(user=Depends(current_user)):
 
 def trend_data() -> list[dict[str, Any]]:
     data = rows("SELECT day, SUM(spend) spend, SUM(revenue) revenue FROM campaign_daily GROUP BY day ORDER BY day")
-    return [{"d": x["day"], "spend": round(x["spend"],2), "revenue": round(x["revenue"],2)} for x in data]
+    return [{"d": x["day"], "spend": round(x["spend"], 2), "revenue": round(x["revenue"], 2)} for x in data]
 
 
 @app.get("/api/campaigns")
@@ -461,6 +492,7 @@ def insights(user=Depends(current_user)):
 
 
 # ---------- analysis history ----------
+
 class AnalysisPayload(BaseModel):
     sku: str
     product: str
@@ -494,7 +526,7 @@ def analysis_history(user=Depends(current_user)):
     for x in data:
         result = json.loads(x["result_json"])
         inp = json.loads(x["input_json"])
-        out.append({"id": str(x["id"]), "created_at": x["created_at"], "status": x["status"], "sku": inp.get("sku"), "product": inp.get("product"), "kpis": result.get("kpis",{}), "recommendation": result.get("recommendation",{})})
+        out.append({"id": str(x["id"]), "created_at": x["created_at"], "status": x["status"], "sku": inp.get("sku"), "product": inp.get("product"), "kpis": result.get("kpis", {}), "recommendation": result.get("recommendation", {})})
     return out
 
 
@@ -510,19 +542,20 @@ def get_analysis(analysis_id: int, user=Depends(current_user)):
 @app.get("/references")
 def references(user=Depends(current_user)):
     return [
-        {"source":"campaigns","table":"campaigns","fields":["campaign_id","name","channel","margin"],"formula":"campaign metadata + margin normalization","reason":"Identify campaign identity, channel and product economics.","limitations":"Margin is a campaign-level baseline."},
-        {"source":"campaign_daily","table":"campaign_daily","fields":["day","campaign_id","spend","revenue"],"formula":"ROAS = revenue / spend; OLS over daily revenue","reason":"Measure historical advertising efficiency and forecast near-term revenue.","limitations":"Does not contain impression/click/conversion funnel fields."},
-        {"source":"inventory","table":"inventory","fields":["sku_id","product_name","stock_level","net_margin","status","campaign_id"],"formula":"inventory coverage = stock / expected daily demand","reason":"Prevent aggressive spend against constrained stock.","limitations":"Inventory is a current snapshot; no supplier lead-time history."},
-        {"source":"custom_inventory","table":"custom_inventory","fields":["sku_id","product_name","stock_level","selling_price","unit_cost","campaign_id"],"formula":"Scenario inputs supplied by the operator","reason":"Allow custom inventory scenarios to be evaluated against historical evidence.","limitations":"Operator-supplied values are assumptions, not observed facts."},
-        {"source":"analyses","table":"analyses","fields":["created_at","input_json","result_json"],"formula":"Persist complete scenario + result","reason":"Provide an auditable analysis history.","limitations":"History is local to this Athena instance."},
+        {"source": "campaigns", "table": "campaigns", "fields": ["campaign_id", "name", "channel", "margin"], "formula": "campaign metadata + margin normalization", "reason": "Identify campaign identity, channel and product economics.", "limitations": "Margin is a campaign-level baseline."},
+        {"source": "campaign_daily", "table": "campaign_daily", "fields": ["day", "campaign_id", "spend", "revenue"], "formula": "ROAS = revenue / spend; OLS over daily revenue", "reason": "Measure historical advertising efficiency and forecast near-term revenue.", "limitations": "Does not contain impression/click/conversion funnel fields."},
+        {"source": "inventory", "table": "inventory", "fields": ["sku_id", "product_name", "stock_level", "net_margin", "status", "campaign_id"], "formula": "inventory coverage = stock / expected daily demand", "reason": "Prevent aggressive spend against constrained stock.", "limitations": "Inventory is a current snapshot; no supplier lead-time history."},
+        {"source": "custom_inventory", "table": "custom_inventory", "fields": ["sku_id", "product_name", "stock_level", "selling_price", "unit_cost", "campaign_id"], "formula": "Scenario inputs supplied by the operator", "reason": "Allow custom inventory scenarios to be evaluated against historical evidence.", "limitations": "Operator-supplied values are assumptions, not observed facts."},
+        {"source": "analyses", "table": "analyses", "fields": ["created_at", "input_json", "result_json"], "formula": "Persist complete scenario + result", "reason": "Provide an auditable analysis history.", "limitations": "History is local to this Athena instance."},
     ]
 
 
 # ---------- optional legacy-friendly endpoints ----------
+
 @app.get("/api/metrics")
 def metrics(user=Depends(current_user)):
     d = dashboard(user)["summary"]
-    return {"range":"all", "spend":d["ad_spend"], "revenue":d["revenue"], "roas":d["roas"], "contribution":d["contribution"], "roas_floor":1.5}
+    return {"range": "all", "spend": d["ad_spend"], "revenue": d["revenue"], "roas": d["roas"], "contribution": d["contribution"], "roas_floor": 1.5}
 
 
 @app.get("/api/chart")
@@ -531,6 +564,7 @@ def chart(user=Depends(current_user)):
 
 
 # ---------- serve built frontend ----------
+
 if FRONTEND_DIST.exists():
     app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
 
@@ -540,11 +574,9 @@ def root():
     index = FRONTEND_DIST / "index.html"
     if index.exists():
         return FileResponse(index)
-    return {"status":"online","message":"Athena API is running. Build frontend with npm run build."}
+    return {"status": "online", "message": "Athena API is running. Build frontend with npm run build."}
 
 
-# SPA fallback: browser refreshes on /history/123, /run, /references, etc.
-# should still return the React entry point rather than a server 404.
 @app.get("/{full_path:path}")
 def spa_fallback(full_path: str):
     if full_path.startswith(("api/", "auth/", "analyses", "references", "health", "assets/")):
@@ -554,54 +586,3 @@ def spa_fallback(full_path: str):
         return FileResponse(index)
     raise HTTPException(404, "Frontend has not been built yet")
 
-
-from fastapi.middleware.cors import CORSMiddleware
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Optional
-
-app = FastAPI()
-
-# Enable CORS for all origins
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-class RegisterRequest(BaseModel):
-    username: Optional[str] = None
-    email: Optional[str] = None
-    password: Optional[str] = None
-
-# Multi-route decorator catches all common registration endpoints to prevent 404s
-@app.post("/register")
-@app.post("/signup")
-@app.post("/auth/register")
-@app.post("/auth/signup")
-@app.post("/api/register")
-@app.post("/api/signup")
-@app.post("/api/auth/register")
-@app.post("/api/auth/signup")
-async def register_user(payload: dict):
-    return {
-        "status": "success",
-        "message": "Account created successfully",
-        "user": {
-            "id": 1,
-            "username": payload.get("username", "user"),
-            "email": payload.get("email", "user@example.com")
-        },
-        "token": "fake-jwt-token-for-demo"
-    }
